@@ -106,8 +106,28 @@ export function Studio({ setup = false }: { setup?: boolean }) {
   const [sampleQuery, setSampleQuery] = useState('');
   const [preview, setPreview] = useState<string | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
+  // A continuously animating glow is not free, and this is an audio
+  // application: it stops when the window is not on screen, and never runs for
+  // someone who asked for reduced motion.
+  const [windowVisible, setWindowVisible] = useState(true);
+  const [reducedMotion, setReducedMotion] = useState(false);
   const end = useRef<HTMLDivElement>(null);
   const mounted = useRef(true);
+  useEffect(() => {
+    const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const applyMotion = () => setReducedMotion(motion.matches);
+    // Visibility, not focus: a window the producer can see should still glow
+    // while they are clicking around in Cubase.
+    const applyVisibility = () => setWindowVisible(document.visibilityState === 'visible');
+    applyMotion();
+    applyVisibility();
+    motion.addEventListener('change', applyMotion);
+    document.addEventListener('visibilitychange', applyVisibility);
+    return () => {
+      motion.removeEventListener('change', applyMotion);
+      document.removeEventListener('visibilitychange', applyVisibility);
+    };
+  }, []);
   useEffect(() => {
     mounted.current = true;
     if (!window.orchestra) {
@@ -249,6 +269,7 @@ export function Studio({ setup = false }: { setup?: boolean }) {
   const visibleCalls = [...calls].reverse();
   const canWrite = connected && mode === 'assist' && !busy && !data?.error;
   const providerLabel = runtime?.providerLabel ?? 'Demo agent';
+  const beamActive = !reducedMotion && windowVisible;
   const streaming = data?.streaming ?? null;
   // A turn is live while the request is in flight or text is still arriving.
   const turnRunning = busy || !!streaming;
@@ -897,13 +918,14 @@ export function Studio({ setup = false }: { setup?: boolean }) {
             <div ref={end} />
           </div>
           <div className="shrink-0 px-6 pb-5">
-            {/* The beam rides the composer while a turn is live, so the input
-                itself carries the state instead of a separate spinner. */}
+            {/* The beam only paints while active, so it stays on and its
+                strength carries the state: lit at rest so the composer reads as
+                the AI surface, brighter while a turn runs. */}
             <BorderBeam
-              size="line"
-              colorVariant="mono"
-              strength={0.55}
-              active={turnRunning}
+              size="md"
+              colorVariant="colorful"
+              strength={turnRunning ? 1 : 0.8}
+              active={beamActive}
               theme="dark"
               className="rounded-xl"
             >
@@ -912,7 +934,7 @@ export function Studio({ setup = false }: { setup?: boolean }) {
                   event.preventDefault();
                   void send();
                 }}
-                className="rounded-xl border border-line bg-panel p-4 focus-within:border-accent/50"
+                className="rounded-xl border border-line/70 bg-panel p-4 transition-colors focus-within:border-accent/40"
               >
                 <label htmlFor="composer" className="sr-only">
                   Message {runtime?.providerLabel ?? 'Demo agent'}
@@ -939,6 +961,11 @@ export function Studio({ setup = false }: { setup?: boolean }) {
                     {runtime?.providerLive ? 'Live model' : 'Local only'}
                     <span className="mx-1 text-line">|</span>
                     {mode === 'ask' ? 'Read-only session' : 'Changes need approval'}
+                    <span className="mx-1 hidden text-line xl:inline">|</span>
+                    <span className="hidden text-muted/60 xl:inline">
+                      <kbd className="font-mono">↵</kbd> send · <kbd className="font-mono">⇧↵</kbd>{' '}
+                      newline
+                    </span>
                   </span>
                   {turnRunning ? (
                     <button
