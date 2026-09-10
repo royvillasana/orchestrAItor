@@ -120,6 +120,41 @@ describe('permission-controlled orchestration', () => {
     ]);
     expect(results.map((r) => r.status)).toEqual(['succeeded', 'denied']);
   });
+  it('treats clip generation as a write: refused in Ask, approved in Assist, no undo', async () => {
+    const written: Record<string, unknown>[] = [];
+    const { core } = fixture();
+    core.useArtifacts({
+      createClip: async (input) => {
+        written.push(input);
+        return 'Saved as /tmp/clip.mid. Drop it onto a track; the session itself is unchanged.';
+      },
+    });
+    await core.connect();
+    // A file is still a write: Ask refuses it before anything is generated.
+    const denied = await core.request('midi.create_clip', { kind: 'chords' }, 'c');
+    expect(denied.status).toBe('denied');
+    expect(written).toEqual([]);
+
+    await core.setMode('assist');
+    const proposed = await core.request('midi.create_clip', { kind: 'chords', bars: 4 }, 'c');
+    expect(proposed.status).toBe('awaiting-approval');
+    expect(written).toEqual([]);
+    const done = await core.decide(proposed.id, proposed.sessionId, true);
+    expect(done.status).toBe('succeeded');
+    expect(written).toEqual([{ kind: 'chords', bars: 4 }]);
+    // Nothing was changed in the session, so nothing is offered to undo.
+    expect(done.undoable).toBe(false);
+    expect(done.detail).toMatch(/session itself is unchanged/);
+  });
+  it('exposes clip generation only when generation is available', async () => {
+    const { core } = fixture();
+    await core.connect();
+    await core.setMode('assist');
+    expect((await core.tools()).some((tool) => tool.id === 'midi.create_clip')).toBe(false);
+    core.useArtifacts({ createClip: async () => 'ok' });
+    const tool = (await core.tools()).find((t) => t.id === 'midi.create_clip');
+    expect(tool).toMatchObject({ risk: 'safe-write', requiresConfirmation: true });
+  });
   it('rechecks adapter capability after approval', async () => {
     const { core, adapter } = fixture();
     await core.connect();

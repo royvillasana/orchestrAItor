@@ -249,6 +249,7 @@ export function Studio({ setup = false }: { setup?: boolean }) {
   const partnerBlocked =
     partnerOptions.find((option) => option.id === partner)?.unavailable ?? null;
   const library = data?.library ?? { roots: [], total: 0 };
+  const artifacts = data?.artifacts ?? [];
   const bridgeUnavailable = data?.midi
     ? data.midi.available
       ? null
@@ -717,7 +718,58 @@ export function Studio({ setup = false }: { setup?: boolean }) {
               ))}
             </div>
           </div>
-          <div className="flex min-h-0 shrink-0 flex-col border-t border-line px-5 py-5">
+          <div className="flex min-h-0 shrink-0 flex-col border-t border-line px-5 py-4">
+            <div className="flex items-center gap-2 text-xs text-muted">
+              <Icon kind="wave" />
+              Generated clips
+              <span className="ml-auto text-[10px] text-muted/60">{artifacts.length}</span>
+            </div>
+            {artifacts.length === 0 ? (
+              <p className="mt-2 text-[10px] leading-4 text-muted/60">
+                Clips you ask for appear here as MIDI files to drop onto a track.
+              </p>
+            ) : (
+              <ul className="mt-2 max-h-36 space-y-1 overflow-y-auto">
+                {artifacts.map((artifact) => (
+                  <li
+                    key={artifact.id}
+                    draggable
+                    onDragStart={(event) => {
+                      // The desktop process owns the drag; the browser's own
+                      // drag data cannot carry a file into another application.
+                      event.preventDefault();
+                      void run((api) => api.dragArtifact({ id: artifact.id }));
+                    }}
+                    title={`${artifact.summary}\n${artifact.path}`}
+                    className="group cursor-grab rounded border border-line/60 px-2 py-1.5 text-[11px] transition hover:border-accent/40 active:cursor-grabbing"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="truncate text-paper/90">{artifact.kind}</span>
+                      <span className="shrink-0 text-muted/70">
+                        {artifact.bars} bars · {artifact.key} {artifact.scale}
+                      </span>
+                    </div>
+                    <div className="mt-1 flex items-center gap-2 opacity-0 transition group-hover:opacity-100">
+                      <button
+                        onClick={() => void run((api) => api.revealArtifact({ id: artifact.id }))}
+                        className="text-[10px] text-muted hover:text-paper"
+                      >
+                        Reveal
+                      </button>
+                      <button
+                        onClick={() => void run((api) => api.removeArtifact({ id: artifact.id }))}
+                        className="text-[10px] text-muted hover:text-warm"
+                      >
+                        Remove
+                      </button>
+                      <span className="ml-auto text-[9px] text-muted/50">drag to Cubase</span>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <div className="flex min-h-0 shrink-0 flex-col border-t border-line px-5 py-4">
             <div className="flex items-center gap-2 text-xs text-muted">
               <Icon kind="folder" />
               Sample libraries

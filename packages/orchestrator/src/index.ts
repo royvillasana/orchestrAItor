@@ -5,6 +5,7 @@ import {
   type Capability,
   localToolNames,
   isLocalTool,
+  isLocalWriteTool,
   activitySchema,
   errorText,
   resultSchema,
@@ -22,6 +23,9 @@ export interface SampleTools {
   search(query: string, limit: number): Promise<string>;
   stats(): Promise<string>;
 }
+export interface ArtifactTools {
+  createClip(input: Record<string, unknown>): Promise<string>;
+}
 export class Orchestrator {
   readonly sessionId = randomUUID();
   private mode: Mode = 'ask';
@@ -30,6 +34,7 @@ export class Orchestrator {
   private calls = new Map<string, Activity>();
   private adapterId: AdapterId = 'mock';
   private samples: SampleTools | null = null;
+  private artifacts: ArtifactTools | null = null;
   private provider: { id: ProviderId; label: string; live: boolean } = {
     id: 'demo',
     label: 'Demo agent',
@@ -87,14 +92,16 @@ export class Orchestrator {
     );
     // Sample tools answer from the local index, so they do not depend on a DAW
     // session and are read-only in both modes.
-    const localTools: Capability[] = this.samples
-      ? localToolNames.map((id) => ({
-          id,
-          support: 'native' as const,
-          risk: 'read' as const,
-          requiresConfirmation: false,
-        }))
-      : [];
+    const localTools: Capability[] = localToolNames
+      .filter((id) => (isLocalWriteTool(id) ? this.artifacts !== null : this.samples !== null))
+      .map((id) => ({
+        id,
+        support: 'native' as const,
+        // A generated clip is a file the producer did not ask for byte by byte,
+        // so it is a write and takes the same approval as one.
+        risk: isLocalWriteTool(id) ? ('safe-write' as const) : ('read' as const),
+        requiresConfirmation: isLocalWriteTool(id),
+      }));
     return [...adapterTools, ...localTools];
   }
   async tools() {
@@ -105,6 +112,10 @@ export class Orchestrator {
   /** Local, read-only sample search, injected so the orchestrator owns no storage. */
   useSamples(samples: SampleTools | null) {
     this.samples = samples;
+  }
+  /** Local clip generation, injected for the same reason. */
+  useArtifacts(artifacts: ArtifactTools | null) {
+    this.artifacts = artifacts;
   }
   private dawLabel() {
     const named = this.adapter as DawAdapter & { connectedDaw?: string | null };
@@ -208,8 +219,23 @@ export class Orchestrator {
    * take the same recorded path without the adapter's before/after handling.
    */
   private async executeLocal(call: Activity): Promise<Activity> {
-    await this.record({ ...call, status: 'running', detail: 'Reading the local sample index.' });
+    await this.record({
+      ...call,
+      status: 'running',
+      detail: isLocalWriteTool(call.tool)
+        ? 'Generating the clip.'
+        : 'Reading the local sample index.',
+    });
     try {
+      if (isLocalWriteTool(call.tool)) {
+        if (!this.artifacts) throw new Error('Clip generation is unavailable.');
+        const detail = await this.artifacts.createClip(
+          toolSchemas['midi.create_clip'].parse(call.arguments),
+        );
+        // A generated file is not session state, so there is nothing to restore
+        // into the DAW and nothing to offer an undo for.
+        return this.record({ ...call, status: 'succeeded', undoable: false, detail });
+      }
       if (!this.samples) throw new Error('No sample library is available.');
       const detail =
         call.tool === 'samples.stats'

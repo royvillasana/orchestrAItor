@@ -12,6 +12,7 @@
     "@modelcontextprotocol/sdk": "1.30.0",
     "zod": "3.25.76",
     "@orchestrai/live-agents": "workspace:*",
-    "@orchestrai/cli": "workspace:*"
+    "@orchestrai/cli": "workspace:*",
+    "@orchestrai/music-engine": "workspace:*"
   }
 }

@@ -65,6 +65,25 @@ export const sampleLibrarySchema = z
   .object({ roots: z.array(sampleRootSchema), total: z.number().int().nonnegative() })
   .strict();
 export type SampleLibrary = z.infer<typeof sampleLibrarySchema>;
+export const clipKindSchema = z.enum(['chords', 'bass', 'drums']);
+export const artifactSchema = z
+  .object({
+    id: idSchema,
+    name: z.string().max(200),
+    kind: clipKindSchema,
+    path: z.string().max(1000),
+    summary: z.string().max(500),
+    bars: z.number().int().min(1).max(32),
+    tempo: tempoSchema,
+    key: z.string().max(10),
+    scale: z.string().max(20),
+    progression: z.string().max(30),
+    seed: z.number().int().nonnegative(),
+    noteCount: z.number().int().nonnegative(),
+    createdAt: z.string(),
+  })
+  .strict();
+export type MidiArtifact = z.infer<typeof artifactSchema>;
 export const capabilitySchema = z
   .object({
     id: idSchema,
@@ -106,9 +125,14 @@ export const toolNames = [
   'transport.stop',
   'samples.search',
   'samples.stats',
+  'midi.create_clip',
 ] as const;
 /** Local tools that answer from the sample index rather than from a DAW. */
-export const localToolNames = ['samples.search', 'samples.stats'] as const;
+export const localToolNames = ['samples.search', 'samples.stats', 'midi.create_clip'] as const;
+/** Local writes produce a file rather than a DAW change, but still need approval. */
+export const localWriteToolNames = ['midi.create_clip'] as const;
+export const isLocalWriteTool = (name: string): name is (typeof localWriteToolNames)[number] =>
+  (localWriteToolNames as readonly string[]).includes(name);
 export const isLocalTool = (name: string): name is (typeof localToolNames)[number] =>
   (localToolNames as readonly string[]).includes(name);
 export const toolNameSchema = z.enum(toolNames);
@@ -134,6 +158,19 @@ export const toolSchemas = {
     })
     .strict(),
   'samples.stats': emptySchema,
+  'midi.create_clip': z
+    .object({
+      kind: clipKindSchema,
+      bars: z.number().int().min(1).max(32).optional(),
+      key: z.string().max(10).optional(),
+      scale: z
+        .enum(['major', 'minor', 'dorian', 'phrygian', 'lydian', 'mixolydian', 'harmonicMinor'])
+        .optional(),
+      progression: z.enum(['pop', 'sad', 'loop', 'cadence', 'descending']).optional(),
+      tempo: tempoSchema.optional(),
+      seed: z.number().int().min(0).max(999999).optional(),
+    })
+    .strict(),
 };
 export const commandSchema = z
   .object({ tool: toolNameSchema, arguments: argumentsSchema })
@@ -254,6 +291,7 @@ export const snapshotSchema = z
     indexing: z.string().max(300).nullable(),
     streaming: streamSchema.nullable(),
     samples: z.array(indexedSampleSchema).max(50),
+    artifacts: z.array(artifactSchema).max(200),
     agents: z.array(agentSchema),
     history: historySchema,
     logs: z.array(logSchema),
@@ -312,6 +350,16 @@ export const storeCommandSchema = z.discriminatedUnion('type', [
     .strict(),
   z.object({ type: z.literal('sampleByPath'), path: z.string().max(1000) }).strict(),
   z.object({ type: z.literal('samplesForRoot'), root: z.string().max(1000) }).strict(),
+  z.object({ type: z.literal('artifacts') }).strict(),
+  z
+    .object({
+      type: z.literal('artifact'),
+      artifact: artifactSchema.omit({ path: true }),
+      // The clip itself, base64 for the wire; the store owns where it lands.
+      data: z.string().max(2000000),
+    })
+    .strict(),
+  z.object({ type: z.literal('removeArtifact'), id: idSchema }).strict(),
 ]);
 export type StoreCommand = z.infer<typeof storeCommandSchema>;
 export const wireSchema = z.discriminatedUnion('kind', [
@@ -341,6 +389,9 @@ export const ipcInputs = {
   addSampleFolder: emptySchema,
   removeSampleFolder: z.object({ path: z.string().min(1).max(1000) }).strict(),
   reindexSamples: emptySchema,
+  revealArtifact: z.object({ id: idSchema }).strict(),
+  removeArtifact: z.object({ id: idSchema }).strict(),
+  dragArtifact: z.object({ id: idSchema }).strict(),
   searchSamples: z
     .object({ query: z.string().max(120), limit: z.number().int().min(1).max(50).optional() })
     .strict(),

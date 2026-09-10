@@ -1,4 +1,13 @@
-import { app, BrowserWindow, dialog, ipcMain, protocol, session } from 'electron';
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  nativeImage,
+  protocol,
+  session,
+  shell,
+} from 'electron';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { realpath } from 'node:fs/promises';
@@ -12,6 +21,7 @@ import {
   providerIdSchema,
   sampleLibrarySchema,
   indexedSampleSchema,
+  artifactSchema,
   ipcInputs,
   sendSchema,
   callSchema,
@@ -61,7 +71,11 @@ let indexing: string | null = null;
 let streaming: StreamChunk | null = null;
 let samples: Snapshot['samples'] = [];
 let library: Snapshot['library'] = { roots: [], total: 0 };
+let artifacts: Snapshot['artifacts'] = [];
 /** Discovery ids are product names; provider ids are what the runtime selects. */
+/** Drag needs a picture; a plain accent tile beats a missing icon. */
+const DRAG_ICON =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAAAUElEQVR42u3aMQ0AIAwAwUogBPkIwgwaiggGUnLDC7j9o/WRlYtvAGvPUgEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA3ADcKo86hZfKt1L995gAAAAASUVORK5CYII=';
 const agentKey = (id: string) =>
   id === 'claude-code' ? 'claude' : id === 'codex' ? 'codex' : 'openai';
 const verificationSchema = z
@@ -138,6 +152,7 @@ async function snapshot(): Promise<Snapshot> {
     library,
     indexing,
     streaming,
+    artifacts,
     samples,
     agents,
     history: lastHistory,
@@ -192,6 +207,17 @@ async function indexRoots(roots: string[]) {
   }
   indexing = null;
   library = sampleLibrarySchema.parse(await db.execute({ type: 'library' }));
+}
+function startArtifactDrag(sender: Electron.WebContents, input: unknown) {
+  const artifact = artifacts.find((a) => a.id === ipcInputs.dragArtifact.parse(input).id);
+  if (!artifact) return;
+  try {
+    sender.startDrag({ file: artifact.path, icon: nativeImage.createFromDataURL(DRAG_ICON) });
+  } catch (error) {
+    // A refused drag is a platform limitation, not a failed operation: reveal
+    // in the file manager still works.
+    log('artifact.drag_failed', errorText(error));
+  }
 }
 async function invoke(method: IpcMethod, input: unknown): Promise<Snapshot> {
   const value = ipcInputs[method].parse(input);
@@ -264,6 +290,16 @@ async function invoke(method: IpcMethod, input: unknown): Promise<Snapshot> {
         }),
       );
     }
+    if (method === 'revealArtifact') {
+      const artifact = artifacts.find((a) => a.id === ipcInputs.revealArtifact.parse(value).id);
+      // Reveal rather than open: a MIDI file opened by the system launches
+      // whatever is registered for it, which is not what "show me" means.
+      if (artifact) shell.showItemInFolder(artifact.path);
+    }
+    if (method === 'removeArtifact') {
+      await db.execute({ type: 'removeArtifact', ...ipcInputs.removeArtifact.parse(value) });
+      artifacts = z.array(artifactSchema).parse(await db.execute({ type: 'artifacts' }));
+    }
     if (method === 'setProvider')
       await runtime!.control({ type: 'provider', ...ipcInputs.setProvider.parse(value) });
     if (method === 'connect') {
@@ -314,6 +350,10 @@ async function invoke(method: IpcMethod, input: unknown): Promise<Snapshot> {
     if (method === 'undo') await runtime!.control({ type: 'undo', ...ipcInputs.undo.parse(value) });
     if (method === 'cancel') await runtime!.control({ type: 'cancel' });
     if (runtime && !failure) state = await runtime.state();
+    // Generation happens inside an approved tool call, so the list is refreshed
+    // from the store rather than from whatever the renderer last asked for.
+    if (db && !databaseFailed)
+      artifacts = z.array(artifactSchema).parse(await db.execute({ type: 'artifacts' }));
   } catch (error) {
     log('operation.error', errorText(error));
     if (method !== 'snapshot') throw error;
@@ -334,6 +374,9 @@ for (const method of Object.keys(ipcInputs) as IpcMethod[])
       )
     )
       throw new Error('Untrusted IPC sender.');
+    // Dragging must start from the frame that is dragging, so this one call
+    // needs the sender; everything else is answered from application state.
+    if (method === 'dragArtifact') startArtifactDrag(event.sender, input);
     return invoke(method, input);
   });
 async function createWindow() {

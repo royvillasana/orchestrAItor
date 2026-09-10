@@ -40,16 +40,16 @@ The renderer MUST run with context isolation and sandbox enabled and Node integr
 
 ### Requirement: Durable local storage
 
-Local storage SHALL apply schema migrations transactionally, upgrading an existing version 1 database to version 2 without losing conversations, messages, tool calls, or transactions. A database at an unsupported future version SHALL be preserved and reported rather than modified.
+Local storage SHALL apply schema migrations transactionally and preserve existing data across upgrades, including conversations, messages, tool calls, transactions, the sample index, and generated artifacts. A database at an unsupported future version SHALL be preserved and reported rather than modified.
 
-#### Scenario: Upgrading an existing library
+#### Scenario: Upgrading to artifact storage
 
-- **WHEN** an application holding schema 1 data starts with schema 2 support
-- **THEN** the new tables are added in a transaction and prior history remains readable
+- **WHEN** an application holding schema 2 data starts with schema 3 support
+- **THEN** the artifact table is added in a transaction and prior history and sample index remain readable
 
 #### Scenario: Failed upgrade
 
-- **WHEN** the upgrade fails partway
+- **WHEN** an upgrade fails partway
 - **THEN** it rolls back and the database is left at its previous version
 
 ### Requirement: Recoverable process lifecycle

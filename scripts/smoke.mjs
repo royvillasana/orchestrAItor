@@ -94,6 +94,11 @@ try {
   const partner = page.getByLabel('Creative partner');
   await partner.waitFor();
   assert.equal(await partner.inputValue(), 'demo');
+  // Generated clips are a file hand-off, and the workspace says so before any
+  // clip exists rather than showing an empty list.
+  const clips = await page.locator('aside').first().innerText();
+  assert.match(clips, /Generated clips/);
+  assert.match(clips, /drop onto a track/i);
   assert.match(await page.locator('header').first().innerText(), /mock/i);
   assert.equal(await page.evaluate(() => typeof window.require), 'undefined');
   assert.equal(await page.evaluate(() => typeof window.process), 'undefined');

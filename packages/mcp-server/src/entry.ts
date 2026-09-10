@@ -13,8 +13,11 @@ import { AgentToolChannel, LiveAgentProvider } from '@orchestrai/live-agents';
 import { discoverAgents, verifyAgent, isVerifiable } from '@orchestrai/cli';
 import { Orchestrator } from '@orchestrai/orchestrator';
 import { z } from 'zod';
+import { generateClip } from '@orchestrai/music-engine';
 import {
   wireSchema,
+  artifactSchema,
+  toolSchemas,
   sampleLibrarySchema,
   indexedSampleSchema,
   historySchema,
@@ -89,6 +92,62 @@ orchestration.useSamples({
     ].join('\n');
   },
 });
+/**
+ * Clip generation. The musical defaults come from the connected session, so a
+ * clip lands in the key and tempo the producer is actually working in.
+ */
+orchestration.useArtifacts({
+  createClip: async (raw) => {
+    const input = toolSchemas['midi.create_clip'].parse(raw);
+    const state = await orchestration.state();
+    const project = state.project;
+    const seed = input.seed ?? Math.floor(Math.random() * 1000000);
+    const key = input.key ?? keyOf(project?.key) ?? 'C';
+    const scale = input.scale ?? scaleOf(project?.key) ?? 'minor';
+    const clip = generateClip({
+      kind: input.kind,
+      key,
+      scale,
+      bars: input.bars ?? 4,
+      tempo: input.tempo ?? project?.tempo ?? 120,
+      progression: input.progression ?? 'pop',
+      seed,
+    });
+    const id = randomUUID();
+    const stored = artifactSchema.parse(
+      await store({
+        type: 'artifact',
+        artifact: {
+          id,
+          name: `${input.kind}-${key}-${input.bars ?? 4}bar`,
+          kind: input.kind,
+          summary: clip.summary,
+          bars: input.bars ?? 4,
+          tempo: input.tempo ?? project?.tempo ?? 120,
+          key,
+          scale,
+          progression: input.progression ?? 'pop',
+          seed,
+          noteCount: clip.notes.length,
+          createdAt: new Date().toISOString(),
+        },
+        data: Buffer.from(clip.bytes).toString('base64'),
+      }),
+    );
+    // Said plainly: this is a file to drop in, not a change to the project.
+    return `${clip.summary}. Saved as ${stored.path}. Drop it onto a track in Cubase; the session itself is unchanged.`;
+  },
+});
+/** A session reports its key as free text, so read it defensively. */
+function keyOf(reported: string | undefined): string | null {
+  const match = /^([A-G][#b]?)/.exec((reported ?? '').trim());
+  return match ? match[1] : null;
+}
+function scaleOf(reported: string | undefined): 'major' | 'minor' | null {
+  if (/minor|min\b|m\b/i.test(reported ?? '')) return 'minor';
+  if (/major|maj\b/i.test(reported ?? '')) return 'major';
+  return null;
+}
 const demo = new DemoProvider();
 let live: LiveAgentProvider | null = null;
 let active: AgentProvider = demo;

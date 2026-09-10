@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { mkdtemp, readFile, writeFile, mkdir, symlink } from 'node:fs/promises';
+import { existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
 import path from 'node:path';
@@ -8,8 +9,10 @@ import {
   redact,
   migrate,
   migration,
+  migration002,
   SCHEMA_VERSION,
 } from '../apps/desktop/electron/store';
+import { artifactSchema } from '../packages/shared-types/src';
 import {
   trustedURL,
   trustedSender,
@@ -156,6 +159,64 @@ describe('SQLite persistence', () => {
     expect(db.exec('SELECT id FROM conversations')[0].values).toEqual([['c1']]);
     expect(db.exec('SELECT id FROM messages')[0].values).toEqual([['m1']]);
     expect(db.exec('SELECT COUNT(*) FROM samples')[0].values).toEqual([[0]]);
+    db.close();
+  });
+  it('upgrades to artifact storage and stores a clip beside the database', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'orchestrai-artifacts-'));
+    const store = await LocalStore.open(path.join(directory, 'orchestrai.sqlite'), wasm);
+    const artifact = {
+      id: 'clip-1',
+      name: 'chords-A-4bar',
+      kind: 'chords' as const,
+      summary: '4-bar chords in A minor at 124 BPM',
+      bars: 4,
+      tempo: 124,
+      key: 'A',
+      scale: 'minor',
+      progression: 'sad',
+      seed: 42,
+      noteCount: 12,
+      createdAt: new Date().toISOString(),
+    };
+    const bytes = Buffer.from('MThd fake clip bytes');
+    const written = artifactSchema.parse(
+      store.execute({ type: 'artifact', artifact, data: bytes.toString('base64') }),
+    );
+    expect(written.path).toContain('artifacts');
+    expect(readFileSync(written.path)).toEqual(bytes);
+    expect(artifactSchema.array().parse(store.execute({ type: 'artifacts' }))).toHaveLength(1);
+
+    // A repeated request produces a second artifact, never an overwrite.
+    const second = artifactSchema.parse(
+      store.execute({
+        type: 'artifact',
+        artifact: { ...artifact, id: 'clip-2' },
+        data: bytes.toString('base64'),
+      }),
+    );
+    expect(second.path).not.toBe(written.path);
+    expect(artifactSchema.array().parse(store.execute({ type: 'artifacts' }))).toHaveLength(2);
+
+    // Removing one deletes its file and leaves the other alone.
+    store.execute({ type: 'removeArtifact', id: 'clip-1' });
+    expect(existsSync(written.path)).toBe(false);
+    expect(existsSync(second.path)).toBe(true);
+    expect(artifactSchema.array().parse(store.execute({ type: 'artifacts' }))).toHaveLength(1);
+    await store.close();
+  });
+  it('carries history and the sample index across the schema 2 to 3 upgrade', async () => {
+    const init: typeof import('sql.js').default = require('sql.js');
+    const SQL = await init({ locateFile: () => wasm });
+    const db = new SQL.Database();
+    migrate(db, migration, { 2: migration002 });
+    expect(Number(db.exec('SELECT MAX(version) FROM schema_migrations')[0].values[0][0])).toBe(2);
+    db.run('INSERT INTO conversations VALUES(\'c1\', \'{"id":"c1"}\')');
+    db.run("INSERT INTO samples VALUES('s1', '/root', '{\"id\":\"s1\"}')");
+    migrate(db);
+    expect(Number(db.exec('SELECT MAX(version) FROM schema_migrations')[0].values[0][0])).toBe(3);
+    expect(db.exec('SELECT id FROM conversations')[0].values).toEqual([['c1']]);
+    expect(db.exec('SELECT id FROM samples')[0].values).toEqual([['s1']]);
+    expect(db.exec('SELECT COUNT(*) FROM artifacts')[0].values).toEqual([[0]]);
     db.close();
   });
   it('leaves the database at its previous version when an upgrade fails', async () => {

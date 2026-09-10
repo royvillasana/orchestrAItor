@@ -59,19 +59,14 @@ The application SHALL start a supervised MCP-compatible stdio server in a separa
 
 ### Requirement: Durable transactions and honest undo
 
-Every invocation SHALL produce a correlated transaction/activity record including failed, rejected, and read operations. Write intent MUST be persisted before execution. Successful reversible mock writes SHALL expose permission-controlled Undo using a prior-state snapshot and revision check.
+Every invocation SHALL be recorded with its terminal outcome. Writes that mutate the DAW SHALL be undoable through a state-revision check. A write whose effect is a generated file SHALL be recorded in the same way and SHALL report that it produced an artifact rather than a session change, since there is no session state to restore.
 
-#### Scenario: Persistence unavailable
+#### Scenario: Generated clip is recorded
 
-- **WHEN** a write intent cannot be persisted
-- **THEN** the write is not executed and an error is shown
+- **WHEN** a clip generation is approved and completes
+- **THEN** the transaction records the artifact it produced and does not offer to undo a session change
 
-#### Scenario: Undo conflicts
+#### Scenario: DAW write remains undoable
 
-- **WHEN** Undo is requested after another write has changed the expected state revision
-- **THEN** the operation reports a conflict without overwriting newer state
-
-#### Scenario: Restart with incomplete transaction
-
-- **WHEN** startup finds an invocation with no terminal outcome
-- **THEN** it records interruption or unknown outcome and does not replay the command
+- **WHEN** an approved tempo change completes
+- **THEN** it remains undoable through the existing revision check

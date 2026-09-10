@@ -172,13 +172,27 @@ Preview plays through `orchestra-sample://`, a second protocol confined to the i
 
 **What leaves the machine**: audio never does. When a live partner is connected, search results it asks for — file names, folder names, and header facts — are sent to that model provider along with the rest of the conversation, which is what the connection screen already discloses.
 
+## Generated clips (MIDI artifacts)
+
+Ask for a chord progression, bassline, or drum pattern and the agent generates a real standard MIDI file in the session's key and tempo. Clips appear in the workspace with their musical summary; drag one onto a Cubase track, or reveal it in Finder.
+
+**A clip is a file, not an insertion.** Cubase's MIDI Remote API controls a surface — it cannot create parts in a project — so the honest hand-off is a file you drop in, and the interface says exactly that rather than implying your session changed.
+
+- **Theory, not tables**: chords come from scale degrees and roman numerals, so a progression is correct in whatever key the session reports and can be described back as `i · VI · III · VII in A minor`. Voicings stay in a playable register.
+- **Deterministic**: every generator is pure and seeded, the seed is recorded with the artifact, and the same request reproduces the same file. "Give me another one" and "give me that one again" are different requests.
+- **No dependency**: the MIDI writer emits bytes directly — header and track chunks, variable-length delta times, tempo and time-signature meta events. It is verified by parsing files back and by `file(1)` identifying them as `Standard MIDI data (format 0)`.
+- **An approved write**: `midi.create_clip` is refused in Ask and requires approval in Assist like any other write. Nothing is written before you approve. Because a file is not session state, there is nothing to undo into the DAW, and the activity says so instead of offering a restore that would do nothing.
+
+Clips live under `artifacts/` in the application data directory, never in your project or sample folders, and generation never overwrites: a repeated request produces a second clip beside the first.
+
 ## Local data and recovery
 
 Data lives in Electron's OS application-data directory under `OrchestrAI`:
 
 - macOS: `~/Library/Application Support/OrchestrAI/`
 - Windows: `%APPDATA%/OrchestrAI/`
-- `orchestrai.sqlite`: settings, conversations, messages, tool calls, transactions, sample roots and index, and migration versions (schema 2).
+- `orchestrai.sqlite`: settings, conversations, messages, tool calls, transactions, sample roots and index, generated clips, and migration versions (schema 3).
+- `artifacts/`: generated MIDI clips, one file per clip.
 - `events.jsonl`: structured local diagnostics with secret patterns redacted.
 
 SQLite runs through `sql.js` in a worker, avoiding native Electron ABI rebuilds. Each mutation commits and writes an atomic checkpoint before acknowledging durability. This is appropriate for the skeleton's metadata; large sample catalogs will need a storage performance review before Milestone 3. One application instance owns the database. The database is local but not encrypted, so conversations should not contain API credentials. No API-key entry/storage is implemented yet; future credentials must use the OS credential store.
@@ -210,4 +224,4 @@ For development-mode smoke verification, start `pnpm --filter @orchestrai/deskto
 
 ## Next milestones
 
-MIDI artifact generation and audio analysis remain the next milestone. API credential storage, plugin operations, autonomous Agent mode, and token-level streaming into the transcript remain separate integrations. The active implementation checklist is `openspec/changes/add-cubase-midi-bridge/tasks.md`; Milestone 1 is archived under `openspec/changes/archive/`.
+Audio analysis, and track and mixer awareness from a live session, remain the next milestones. API credential storage, plugin operations, autonomous Agent mode, and token-level streaming into the transcript remain separate integrations. The active implementation checklist is `openspec/changes/add-cubase-midi-bridge/tasks.md`; Milestone 1 is archived under `openspec/changes/archive/`.

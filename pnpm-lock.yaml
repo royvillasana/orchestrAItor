@@ -177,6 +177,9 @@ importers:
       '@orchestrai/live-agents':
         specifier: workspace:*
         version: link:../agents/live
+      '@orchestrai/music-engine':
+        specifier: workspace:*
+        version: link:../music-engine
       '@orchestrai/orchestrator':
         specifier: workspace:*
         version: link:../orchestrator

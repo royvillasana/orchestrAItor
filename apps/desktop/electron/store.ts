@@ -5,6 +5,7 @@ import {
   mkdirSync,
   openSync,
   writeFileSync,
+  rmSync,
   fsyncSync,
   closeSync,
   renameSync,
@@ -16,6 +17,8 @@ import {
   activitySchema,
   historySchema,
   indexedSampleSchema,
+  artifactSchema,
+  type MidiArtifact,
   sampleLibrarySchema,
   sampleRootSchema,
   type IndexedSample,
@@ -50,8 +53,22 @@ CREATE TABLE samples(id TEXT PRIMARY KEY, root TEXT NOT NULL, json TEXT NOT NULL
 CREATE INDEX samples_root ON samples(root);
 INSERT INTO schema_migrations VALUES(2);
 `;
-export const SCHEMA_VERSION = 2;
-export function migrate(db: Database, sql = migration, upgrades = { 2: migration002 }) {
+/** Generated MIDI clips. Files live beside the database, under application data. */
+export const migration003 = `
+CREATE TABLE artifacts(id TEXT PRIMARY KEY, json TEXT NOT NULL);
+INSERT INTO schema_migrations VALUES(3);
+`;
+export const MIGRATIONS: Record<number, string> = { 2: migration002, 3: migration003 };
+/** The schema this build targets: whatever the last migration it ships reaches. */
+export const SCHEMA_VERSION = Math.max(1, ...Object.keys(MIGRATIONS).map(Number));
+export function migrate(
+  db: Database,
+  sql = migration,
+  upgrades: Record<number, string> = MIGRATIONS,
+) {
+  // Derived from the upgrades in hand rather than the constant, so a caller
+  // holding fewer migrations targets the version those actually reach.
+  const target = Math.max(1, ...Object.keys(upgrades).map(Number));
   const existing = db.exec("SELECT name FROM sqlite_master WHERE name='schema_migrations'");
   const apply = (statements: string) => {
     db.run('BEGIN');
@@ -63,22 +80,19 @@ export function migrate(db: Database, sql = migration, upgrades = { 2: migration
       throw error;
     }
   };
-  if (!existing.length) {
-    apply(sql);
-    if (Number(db.exec('SELECT MAX(version) FROM schema_migrations')[0]?.values[0]?.[0]) === 1)
-      apply(upgrades[2]);
-    return;
-  }
+  // A fresh database takes the base schema and then the same upgrade path an
+  // existing one does, so a new install can never skip a migration.
+  if (!existing.length) apply(sql);
   let version = Number(db.exec('SELECT MAX(version) FROM schema_migrations')[0]?.values[0]?.[0]);
-  if (version > SCHEMA_VERSION)
+  if (version > target)
     throw new Error(
       'Unsupported database schema; preserve this file and use a compatible application version.',
     );
   // Each step commits on its own, so a failure leaves the database at the last
   // version that fully applied rather than half-upgraded.
-  while (version < SCHEMA_VERSION) {
+  while (version < target) {
     const next = version + 1;
-    const statements = upgrades[next as keyof typeof upgrades];
+    const statements = upgrades[next];
     if (!statements)
       throw new Error(
         'Unsupported database schema; preserve this file and use a compatible application version.',
@@ -139,6 +153,16 @@ export class LocalStore {
       mode,
     });
   }
+  private artifactDirectory() {
+    const directory = path.join(path.dirname(this.file), 'artifacts');
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    return directory;
+  }
+  artifacts(): MidiArtifact[] {
+    return (this.db.exec('SELECT json FROM artifacts ORDER BY rowid DESC')[0]?.values ?? []).map(
+      (row) => artifactSchema.parse(JSON.parse(String(row[0]))),
+    );
+  }
   library(): SampleLibrary {
     const roots = (
       this.db.exec('SELECT json FROM sample_roots ORDER BY rowid')[0]?.values ?? []
@@ -187,6 +211,7 @@ export class LocalStore {
     if (command.type === 'library') return this.library();
     if (command.type === 'searchSamples') return this.searchSamples(command.query, command.limit);
     if (command.type === 'sampleByPath') return this.sampleByPath(command.path);
+    if (command.type === 'artifacts') return this.artifacts();
     if (command.type === 'samplesForRoot')
       return (
         this.db.exec('SELECT json FROM samples WHERE root=?', [command.root])[0]?.values ?? []
@@ -196,6 +221,7 @@ export class LocalStore {
       return null;
     }
     const backup = this.db.export();
+    let written: MidiArtifact | null = null;
     try {
       this.db.run('BEGIN');
       const put = (table: string, id: string, value: unknown) =>
@@ -212,6 +238,22 @@ export class LocalStore {
       }
       if (command.type === 'mode')
         this.db.run("UPDATE settings SET value=? WHERE key='mode'", [command.mode]);
+      if (command.type === 'artifact') {
+        // Generation never overwrites: the id is unique per clip, so a repeated
+        // identical request produces a second artifact beside the first.
+        const file = path.join(this.artifactDirectory(), `${command.artifact.id}.mid`);
+        writeFileSync(file, Buffer.from(command.data, 'base64'), { mode: 0o600 });
+        const artifact = artifactSchema.parse({ ...command.artifact, path: file });
+        put('artifacts', artifact.id, artifact);
+        written = artifact;
+      }
+      if (command.type === 'removeArtifact') {
+        const existing = this.artifacts().find((artifact) => artifact.id === command.id);
+        if (existing) {
+          rmSync(existing.path, { force: true });
+          this.db.run('DELETE FROM artifacts WHERE id=?', [command.id]);
+        }
+      }
       if (command.type === 'addRoot')
         this.db.run(
           'INSERT INTO sample_roots(path,json) VALUES(?,?) ON CONFLICT(path) DO NOTHING',
@@ -276,7 +318,7 @@ export class LocalStore {
         }
       this.db.run('COMMIT');
       this.flush();
-      return null;
+      return written;
     } catch (error) {
       // Restore the in-memory snapshot as well as leaving the durable file intact.
       const Constructor = this.db.constructor as new (data: Uint8Array) => Database;
