@@ -31,6 +31,18 @@ describe.skipIf(!backendPresent)('live bridge over real MIDI', () => {
   let db: DatabaseService;
   const failures: string[] = [];
   beforeAll(async () => {
+    // Two peers publishing the same port name are indistinguishable to the
+    // adapter, which would silently talk to the wrong one. Fail loudly instead.
+    const midi = require_('@julusian/midi');
+    const probe = new midi.Input();
+    const existing = Array.from({ length: probe.getPortCount() }, (_, index) =>
+      probe.getPortName(index),
+    ).filter((name: string) => name.includes('OrchestrAI Bridge'));
+    probe.closePort();
+    if (existing.length > 0)
+      throw new Error(
+        `An "OrchestrAI Bridge" MIDI port is already published (${existing.join(', ')}). Stop any standalone peer (scripts/cubase-peer.mjs) before running this test.`,
+      );
     peer = await startCubasePeer({ tempo: 120 });
     const data = await mkdtemp(path.join(tmpdir(), 'orchestrai-live-'));
     db = new DatabaseService(directory, data, (error) => failures.push(error));

@@ -6,7 +6,7 @@ import { idSchema, errorText, toolNameSchema } from '@orchestrai/shared-types';
 export async function availableToolDefinitions(orchestrator: Orchestrator) {
   return (await orchestrator.tools()).map((tool) => ({
     name: toolNameSchema.parse(tool.id),
-    description: `${tool.id} in the mock Cubase session. ${tool.requiresConfirmation ? 'Requires user approval in Assist.' : 'Read only.'}`,
+    description: `${tool.id} in the connected Cubase session. ${tool.requiresConfirmation ? 'Requires user approval in Assist.' : 'Read only.'}`,
     inputSchema:
       tool.id === 'project.set_tempo'
         ? {

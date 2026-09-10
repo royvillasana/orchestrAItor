@@ -192,6 +192,12 @@ export function Studio({ setup = false }: { setup?: boolean }) {
   const pending = calls.filter((c) => c.status === 'awaiting-approval');
   const visibleCalls = [...calls].reverse();
   const canWrite = connected && mode === 'assist' && !busy && !data?.error;
+  // Milestone 1 exists to keep mock state from reading as real. The same rule
+  // runs the other way: a live session must never be labelled mock.
+  const isMock = project ? project.mock : runtime?.adapter !== 'bridge';
+  const sessionBadge = connected ? (isMock ? 'MOCK' : 'LIVE') : 'OFFLINE';
+  const environment = connected ? (runtime?.daw ?? 'Cubase') : 'Not connected';
+  const [projectTitle, projectSubtitle] = (project?.name ?? 'No project').split(' / ');
   const errorBanner = (error || data?.error || !desktop) && (
     <div
       role="alert"
@@ -435,9 +441,9 @@ export function Studio({ setup = false }: { setup?: boolean }) {
       {errorBanner}
       {!connected && !data?.error && (
         <div className="flex items-center justify-center gap-5 border-b border-line bg-panel py-3 text-sm text-muted">
-          Connect the mock session to continue.
+          Connect the {adapter === 'bridge' ? 'live bridge' : 'mock session'} to continue.
           <button onClick={() => void connect()} className={smallButton} disabled={busy}>
-            Connect mock session
+            Connect {adapter === 'bridge' ? 'live bridge' : 'mock session'}
           </button>
         </div>
       )}
@@ -445,11 +451,15 @@ export function Studio({ setup = false }: { setup?: boolean }) {
         <aside className="flex min-h-0 flex-col border-r border-line bg-panel/40">
           <div className="border-b border-line p-5">
             <p className="mb-3 text-[10px] font-semibold tracking-[0.16em] text-muted">PROJECT</p>
-            <h2 className="text-sm font-medium">After hours</h2>
+            <h2 className="truncate text-sm font-medium" title={project?.name ?? undefined}>
+              {projectTitle}
+            </h2>
             <div className="mt-2 flex items-center gap-2 text-[11px] text-muted">
-              <span className="h-1 w-1 rounded-full bg-accent" />
-              Session 01{' '}
-              <span className="ml-auto rounded bg-raised px-1.5 py-0.5 text-[9px]">MOCK</span>
+              <span className="h-1 w-1 shrink-0 rounded-full bg-accent" />
+              <span className="truncate">{projectSubtitle ?? environment}</span>
+              <span className="ml-auto shrink-0 rounded bg-raised px-1.5 py-0.5 text-[9px]">
+                {sessionBadge}
+              </span>
             </div>
           </div>
           <div className="px-3 py-5">
@@ -545,8 +555,8 @@ export function Studio({ setup = false }: { setup?: boolean }) {
                   something good.
                 </h2>
                 <p className="mt-5 max-w-sm text-sm leading-7 text-muted">
-                  Explore your mock session with the local Demo agent. Every action stays visible,
-                  and every change starts with you.
+                  Explore your session with the local Demo agent. Every action stays visible, and
+                  every change starts with you.
                 </p>
                 <div className="mt-7 space-y-2">
                   {['Inspect the project', 'Set tempo to 124 BPM', 'Play the session'].map(
@@ -662,7 +672,8 @@ export function Studio({ setup = false }: { setup?: boolean }) {
               </div>
             </form>
             <p className="mt-2 text-center text-[9px] text-muted/60">
-              Demo responses are deterministic. Your real DAW is not connected.
+              Demo responses are deterministic.{' '}
+              {isMock ? 'Your real DAW is not connected.' : 'Writes reach the connected session.'}
             </p>
           </div>
         </section>
@@ -672,7 +683,7 @@ export function Studio({ setup = false }: { setup?: boolean }) {
               <h2 className="text-[10px] font-semibold tracking-[0.16em] text-muted">
                 SESSION CONTEXT
               </h2>
-              <span className="text-[9px] text-muted">MOCK</span>
+              <span className="text-[9px] text-muted">{sessionBadge}</span>
             </div>
             <div className="grid grid-cols-3 gap-2">
               <div>
@@ -682,19 +693,19 @@ export function Studio({ setup = false }: { setup?: boolean }) {
                 <p className="mt-1 text-[9px] text-muted">BPM</p>
               </div>
               <div>
-                <p className="text-xl">
-                  A <span className="text-sm text-muted">min</span>
+                <p className="truncate text-xl" title={project?.key ?? undefined}>
+                  {project?.key ?? '—'}
                 </p>
                 <p className="mt-1 text-[9px] text-muted">KEY</p>
               </div>
               <div>
-                <p className="font-mono text-xl">4/4</p>
+                <p className="font-mono text-xl">{project?.timeSignature ?? '—'}</p>
                 <p className="mt-1 text-[9px] text-muted">SIGNATURE</p>
               </div>
             </div>
             <div className="mt-5 flex items-center justify-between border-t border-line pt-4 text-[11px] text-muted">
               <span>Execution environment</span>
-              <span className="text-paper">Cubase Mock</span>
+              <span className="truncate pl-3 text-paper">{environment}</span>
             </div>
           </section>
           <div className="flex items-center justify-between px-5 py-5">
@@ -791,9 +802,11 @@ export function Studio({ setup = false }: { setup?: boolean }) {
           <span>
             {project?.tempo ?? '—'} <span className="text-[10px] text-muted">BPM</span>
           </span>
-          <span className="text-muted">4/4</span>
+          <span className="text-muted">{project?.timeSignature ?? '—'}</span>
         </div>
-        <span className="text-[10px] text-muted">Mock transport · No audio output</span>
+        <span className="text-[10px] text-muted">
+          {isMock ? 'Mock transport · No audio output' : `${environment} · Live transport`}
+        </span>
       </footer>
     </main>
   );

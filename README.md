@@ -110,7 +110,7 @@ Three layers of automated coverage, each closer to a real session:
 2. **Driver script** — the shipped script is loaded against a stub shaped after Cubase 15's own `midiremote_api_v1` definition, covering device/port registration, the transport value bindings, `setTempoBPM` with the active mapping, and its refusal to write before Cubase activates the mapping page.
 3. **Live path over real MIDI** (`tests/cubase-bridge-live.test.ts`) — the driver script runs on **real CoreMIDI endpoints** while the supervised runtime child connects to it as it would to Cubase. Real ports, real SysEx bytes on the wire, a real handshake, Ask-mode refusal, and an approved tempo write arriving as `setTempoBPM(mapping, 124)`. Skipped automatically where the optional MIDI backend is not installed.
 
-`node scripts/cubase-peer.mjs` runs that peer standalone, publishing `OrchestrAI Bridge` ports you can connect the desktop app to without Cubase.
+`pnpm test:smoke-bridge` runs the same peer under the built desktop application: it selects the bridge, connects over real MIDI, approves a tempo write, and asserts the interface never labels a live session as mock state. `node scripts/cubase-peer.mjs` runs the peer standalone, publishing `OrchestrAI Bridge` ports you can connect the app to by hand. Only one peer may publish those ports at a time.
 
 What remains unverified is exactly one thing: **Cubase's own interpretation of those API calls**. Everything up to the moment Cubase receives them is covered. To close that last gap, follow the setup above with Cubase running — a Steinberg trial license is sufficient — then approve a tempo change and confirm it in Cubase's transport panel. Windows bridge verification is deferred alongside the existing Windows smoke limitation.
 
@@ -138,6 +138,7 @@ pnpm format:check
 pnpm test
 pnpm build
 pnpm test:smoke
+pnpm test:smoke-bridge
 pnpm audit --prod
 ```
 

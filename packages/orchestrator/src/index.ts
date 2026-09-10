@@ -147,7 +147,7 @@ export class Orchestrator {
           status: 'awaiting-approval',
           expiresAt: this.now() + 300000,
           detail: undoOf
-            ? 'Approve restoring the previous mock state.'
+            ? 'Approve restoring the previous session state.'
             : 'Waiting for your approval. No changes made.',
         });
       }
@@ -264,7 +264,7 @@ export class Orchestrator {
       afterRevision: project.revision,
       result: { project },
       undoable: write && !call.undoOf,
-      detail: `${project.name} · ${project.tempo} BPM · ${project.key} · ${project.playing ? 'Playing' : 'Stopped'} (mock)`,
+      detail: `${project.name} · ${project.tempo} BPM · ${project.key} · ${project.playing ? 'Playing' : 'Stopped'}${project.mock ? ' (mock)' : ' (live)'}`,
     };
     try {
       if (call.undoOf) {
