@@ -57,6 +57,8 @@ packages/
 
 Electron main uses an MCP client over private stdio to reach the runtime. The child owns the demo provider, permission engine, and mock adapter. Desktop transport and demo chat enter the same orchestrator path. A separate validated process channel carries application control, user approval decisions, and persistence acknowledgements; no agent-visible tool can grant its own approval.
 
+Agent replies are rendered from a small Markdown subset — emphasis, inline code, fenced code, headings, and lists — built as React nodes. Model output is untrusted text, so nothing is ever injected as HTML.
+
 The renderer has context isolation and sandbox enabled, Node integration disabled, an allowlisted preload API, frame/origin checks, and restricted navigation. Production CSP hashes the inline hydration scripts in the exported HTML. Privileged work uses typed IPC only. The application protocol rejects traversal and symlink escapes outside the export directory.
 
 Available normalized tools (the mock supports all of them; a live bridge exposes what its handshake reports):

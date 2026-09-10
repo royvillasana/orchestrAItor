@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { RichText } from './rich-text';
 import type {
   Snapshot,
   OrchestraAPI,
@@ -289,7 +290,7 @@ export function Studio({ setup = false }: { setup?: boolean }) {
           </div>
         </header>
         {errorBanner}
-        <div className="mx-auto flex min-h-0 w-full max-w-5xl flex-1 xl:max-w-6xl flex-col justify-center gap-4 px-6 py-5 tall:gap-5 tall:px-10 tall:py-8">
+        <div className="mx-auto flex min-h-0 w-full max-w-5xl flex-1 xl:max-w-6xl flex-col justify-center gap-3 px-6 py-4 tall:gap-5 tall:px-10 tall:py-8">
           <div className="flex shrink-0 items-end justify-between gap-6">
             <div className="min-w-0">
               <p className="mb-2 font-mono text-xs tracking-[0.2em] text-accent tall:mb-4">
@@ -299,8 +300,8 @@ export function Studio({ setup = false }: { setup?: boolean }) {
                 Your next idea starts here.
               </h1>
               <p className="mt-2 max-w-xl text-sm leading-6 text-muted tall:mt-4 tall:leading-7">
-                Your sounds. Your instruments. Your way of working.
-                <br />
+                Your sounds. Your instruments. Your way of working.{' '}
+                <br className="hidden tall:block" />
                 Bring your production environment into one creative conversation.
               </p>
             </div>
@@ -318,9 +319,9 @@ export function Studio({ setup = false }: { setup?: boolean }) {
               </svg>
             </span>
           </div>
-          <div className="grid min-h-0 grid-cols-2 gap-4 tall:gap-5">
-            <section className="flex min-w-0 flex-col rounded-2xl border border-line bg-panel p-5 tall:p-7">
-              <div className="mb-4 flex items-center justify-between tall:mb-6">
+          <div className="grid min-h-0 flex-1 grid-cols-2 gap-4 tall:gap-5">
+            <section className="flex min-h-0 min-w-0 flex-col overflow-y-auto rounded-2xl border border-line bg-panel p-4 tall:p-6">
+              <div className="mb-3 flex items-center justify-between tall:mb-5">
                 <h2 className="text-sm font-medium">
                   <span className="mr-3 text-muted">01</span> Production environment
                 </h2>
@@ -356,12 +357,12 @@ export function Studio({ setup = false }: { setup?: boolean }) {
                       aria-checked={selected}
                       disabled={blocked || busy}
                       onClick={() => setAdapter(option.id)}
-                      className={`w-full rounded-xl border p-4 text-left transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                      className={`w-full rounded-xl border p-3 text-left transition disabled:cursor-not-allowed disabled:opacity-50 tall:p-4 ${
                         selected ? 'border-accent/40 bg-accent/5' : 'border-line hover:border-muted'
                       }`}
                     >
                       <div className="flex items-center gap-4">
-                        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-raised text-paper">
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-raised text-paper tall:h-11 tall:w-11">
                           <Icon kind="wave" />
                         </div>
                         <div className="min-w-0">
@@ -374,9 +375,11 @@ export function Studio({ setup = false }: { setup?: boolean }) {
                           </span>
                         )}
                       </div>
-                      <p className="mt-3 border-t border-line/60 pt-3 text-xs leading-5 text-muted">
-                        {option.unavailable ?? option.detail}
-                      </p>
+                      {(blocked || selected) && (
+                        <p className="mt-2 border-t border-line/60 pt-2 text-[11px] leading-4 text-muted tall:mt-3 tall:pt-3 tall:text-xs tall:leading-5">
+                          {option.unavailable ?? option.detail}
+                        </p>
+                      )}
                     </button>
                   );
                 })}
@@ -392,8 +395,8 @@ export function Studio({ setup = false }: { setup?: boolean }) {
                 ))}
               </div>
             </section>
-            <section className="flex min-w-0 flex-col rounded-2xl border border-line bg-panel p-5 tall:p-7">
-              <div className="mb-4 flex items-center justify-between tall:mb-6">
+            <section className="flex min-h-0 min-w-0 flex-col overflow-y-auto rounded-2xl border border-line bg-panel p-4 tall:p-6">
+              <div className="mb-3 flex items-center justify-between tall:mb-5">
                 <h2 className="text-sm font-medium">
                   <span className="mr-3 text-muted">02</span> Creative partner
                 </h2>
@@ -412,7 +415,7 @@ export function Studio({ setup = false }: { setup?: boolean }) {
                   return (
                     <div
                       key={option.id}
-                      className={`rounded-xl border p-4 transition ${
+                      className={`rounded-xl border p-3 transition tall:p-4 ${
                         selected ? 'border-accent/40 bg-accent/5' : 'border-line'
                       }`}
                     >
@@ -424,7 +427,7 @@ export function Studio({ setup = false }: { setup?: boolean }) {
                           onClick={() => setPartner(option.id)}
                           className="flex min-w-0 flex-1 items-center gap-4 text-left disabled:cursor-not-allowed disabled:opacity-50"
                         >
-                          <div className="shrink-0 rounded-lg bg-accent/10 p-3 text-accent">
+                          <div className="shrink-0 rounded-lg bg-accent/10 p-2.5 text-accent tall:p-3">
                             <Icon kind="spark" />
                           </div>
                           <div className="min-w-0">
@@ -452,18 +455,21 @@ export function Studio({ setup = false }: { setup?: boolean }) {
                             </button>
                           )}
                       </div>
-                      <p className="mt-3 border-t border-line/60 pt-3 text-[11px] leading-5 text-muted">
-                        {option.unavailable ?? option.detail}
-                      </p>
+                      {(blocked || selected) && (
+                        <p className="mt-2 border-t border-line/60 pt-2 text-[11px] leading-4 text-muted tall:mt-3 tall:pt-3 tall:leading-5">
+                          {option.unavailable ?? option.detail}
+                        </p>
+                      )}
                     </div>
                   );
                 })}
               </div>
-              <p className="mt-3 text-[11px] leading-5 text-muted tall:mt-4">
-                {partner === 'demo'
-                  ? 'The Demo agent runs locally and sends nothing anywhere.'
-                  : 'A live partner sends this conversation and project state to its model provider. It signs in with its own CLI; OrchestrAI stores no credentials.'}
-              </p>
+              {partner !== 'demo' && (
+                <p className="mt-2 text-[11px] leading-4 text-warm/80 tall:mt-3 tall:leading-5">
+                  A live partner sends this conversation and project state to its model provider. It
+                  signs in with its own CLI; OrchestrAI stores no credentials.
+                </p>
+              )}
             </section>
           </div>
           <div className="shrink-0 rounded-xl border border-dashed border-line px-5 py-4 tall:px-6 tall:py-5">
@@ -498,7 +504,7 @@ export function Studio({ setup = false }: { setup?: boolean }) {
               </div>
             </div>
             {library.roots.length > 0 && (
-              <ul className="mt-3 space-y-1 border-t border-line/60 pt-3">
+              <ul className="mt-2 max-h-16 space-y-1 overflow-y-auto border-t border-line/60 pt-2 tall:mt-3 tall:max-h-28 tall:pt-3">
                 {library.roots.map((root) => (
                   <li key={root.path} className="flex items-center gap-3 text-[11px] text-muted">
                     <span className="truncate" title={root.path}>
@@ -809,9 +815,15 @@ export function Studio({ setup = false }: { setup?: boolean }) {
                         })}
                       </time>
                     </div>
-                    <p className="whitespace-pre-wrap break-words text-sm leading-7 text-paper/85">
-                      {message.content}
-                    </p>
+                    {message.role === 'assistant' ? (
+                      <div className="break-words text-paper/85">
+                        <RichText text={message.content} />
+                      </div>
+                    ) : (
+                      <p className="whitespace-pre-wrap break-words text-sm leading-7 text-paper/85">
+                        {message.content}
+                      </p>
+                    )}
                   </article>
                 ))}
               </div>

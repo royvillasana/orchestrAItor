@@ -22,6 +22,18 @@ try {
   console.log('SKIP: the optional MIDI backend is not installed.');
   process.exit(0);
 }
+// Two peers publishing the same port names are indistinguishable to the bridge,
+// which then talks to whichever it finds first.
+const probe = new (require_('@julusian/midi').Input)();
+const conflicting = Array.from({ length: probe.getPortCount() }, (_, index) =>
+  probe.getPortName(index),
+).filter((name) => name.includes('OrchestrAI Bridge'));
+probe.closePort();
+assert.equal(
+  conflicting.length,
+  0,
+  `An "OrchestrAI Bridge" port is already published (${conflicting.join(', ')}). Stop any standalone peer first.`,
+);
 const peer = await startCubasePeer({ tempo: 120 });
 const dataDirectory = await mkdtemp(path.join(tmpdir(), 'orchestrai-agent-smoke-'));
 const env = { ...process.env, ORCHESTRA_DATA_DIR: dataDirectory };
