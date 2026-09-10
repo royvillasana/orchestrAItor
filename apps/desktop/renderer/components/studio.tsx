@@ -595,10 +595,47 @@ export function Studio({ setup = false }: { setup?: boolean }) {
             {runtime?.daw ?? 'Cubase 14 · Mock'} ·{' '}
             {connected ? (runtime?.adapter === 'bridge' ? 'live' : 'mock') : 'disconnected'}
           </Pill>
-          <Pill green={connected}>
-            {runtime?.providerLabel ?? 'Demo agent'}
-            {runtime?.providerLive ? ' · live' : ''}
-          </Pill>
+          {/* The partner is switchable here: a producer should not have to
+              leave the session to change who they are working with. */}
+          <div className="relative">
+            <label htmlFor="partner-select" className="sr-only">
+              Creative partner
+            </label>
+            <select
+              id="partner-select"
+              value={runtime?.provider ?? partner}
+              disabled={busy || turnRunning || !connected}
+              onChange={(event) => {
+                const next = event.target.value as ProviderId;
+                setPartner(next);
+                void run((api) => api.setProvider({ provider: next }));
+              }}
+              className={`appearance-none rounded-full border py-1.5 pl-7 pr-7 text-[11px] transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                connected ? 'border-accent/30 bg-accent/5 text-paper' : 'border-line text-muted'
+              }`}
+            >
+              {partnerOptions.map((option) => (
+                <option
+                  key={option.id}
+                  value={option.id}
+                  disabled={!!option.unavailable}
+                  className="bg-panel text-paper"
+                >
+                  {option.title}
+                  {option.id !== 'demo' ? ' · live' : ''}
+                  {option.unavailable ? ' (unavailable)' : ''}
+                </option>
+              ))}
+            </select>
+            <span
+              className={`pointer-events-none absolute left-2.5 top-1/2 h-1.5 w-1.5 -translate-y-1/2 rounded-full ${
+                connected ? 'bg-accent' : 'bg-muted'
+              }`}
+            />
+            <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[9px] text-muted">
+              ▼
+            </span>
+          </div>
           <Link
             href="/"
             aria-label="Connection settings"
@@ -952,7 +989,7 @@ export function Studio({ setup = false }: { setup?: boolean }) {
                   }}
                   placeholder="What are we working on?"
                   rows={2}
-                  className="w-full resize-none bg-transparent text-sm leading-6 placeholder:text-muted/60 focus-visible:ring-0"
+                  className="w-full resize-none bg-transparent text-sm leading-6 placeholder:text-muted/60 focus-visible:ring-0 focus-visible:ring-offset-0"
                 />
                 <div className="mt-3 flex items-center justify-between">
                   <span className="flex items-center gap-2 text-[10px] text-muted">

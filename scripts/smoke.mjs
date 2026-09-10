@@ -79,6 +79,21 @@ try {
     () => document.querySelector('[data-testid="tempo"]')?.textContent === '122',
   );
   await assertFits(page, 'The workspace');
+  // Focus must not paint the page-coloured ring offset, which reads as a dark
+  // square against the lighter composer panel.
+  await page.locator('#composer').click();
+  const focusShadow = await page.evaluate(
+    () => getComputedStyle(document.querySelector('#composer')).boxShadow,
+  );
+  assert.doesNotMatch(
+    focusShadow,
+    /rgb\(16, 18, 20\)/,
+    `Composer focus paints a dark ring: ${focusShadow}`,
+  );
+  // The creative partner is switchable without leaving the session.
+  const partner = page.getByLabel('Creative partner');
+  await partner.waitFor();
+  assert.equal(await partner.inputValue(), 'demo');
   assert.match(await page.locator('header').first().innerText(), /mock/i);
   assert.equal(await page.evaluate(() => typeof window.require), 'undefined');
   assert.equal(await page.evaluate(() => typeof window.process), 'undefined');

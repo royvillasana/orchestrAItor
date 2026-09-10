@@ -205,6 +205,14 @@ async function control(command: Control): Promise<unknown> {
       if (!executable) throw new Error(`${providerNames[command.agent]} is not installed.`);
       return { agent: command.agent, ...(await verifyAgent(command.agent, executable)) };
     }
+    case 'provider': {
+      // A partner may be swapped without disturbing the DAW session, but not
+      // underneath a turn that is already running.
+      if (chatting) throw new Error('Wait for the current response to finish before switching.');
+      await active.cancel();
+      await useProvider(command.provider);
+      return orchestration.state();
+    }
     case 'connect':
       await demo.initialize();
       if (command.provider) await useProvider(command.provider);

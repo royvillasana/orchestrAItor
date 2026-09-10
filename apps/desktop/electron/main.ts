@@ -264,6 +264,8 @@ async function invoke(method: IpcMethod, input: unknown): Promise<Snapshot> {
         }),
       );
     }
+    if (method === 'setProvider')
+      await runtime!.control({ type: 'provider', ...ipcInputs.setProvider.parse(value) });
     if (method === 'connect') {
       await runtime!.control({ type: 'connect', ...ipcInputs.connect.parse(value) });
       failure = null;

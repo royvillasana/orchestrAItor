@@ -41,7 +41,10 @@
   input,
   textarea,
   select {
-    @apply outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-ink;
+    /* No ring offset: the offset colour is the page background, so on a lighter
+       panel it painted a dark square around the control. The ring sits on the
+       element edge instead. */
+    @apply outline-none focus-visible:ring-2 focus-visible:ring-accent;
   }
   button {
     @apply cursor-pointer disabled:cursor-not-allowed disabled:opacity-40;

@@ -281,6 +281,8 @@ export const controlSchema = z.discriminatedUnion('type', [
     .strict(),
   z.object({ type: z.literal('midi') }).strict(),
   z.object({ type: z.literal('verify'), agent: providerIdSchema }).strict(),
+  // Switching the creative partner mid-session, without touching the DAW.
+  z.object({ type: z.literal('provider'), provider: providerIdSchema }).strict(),
   z.object({ type: z.literal('disconnect') }).strict(),
   z.object({ type: z.literal('mode'), mode: modeSchema }).strict(),
   z.object({ type: z.literal('decision'), decision: decisionSchema }).strict(),
@@ -335,6 +337,7 @@ export const ipcInputs = {
     .object({ adapter: adapterIdSchema.optional(), provider: providerIdSchema.optional() })
     .strict(),
   verify: z.object({ agent: providerIdSchema }).strict(),
+  setProvider: z.object({ provider: providerIdSchema }).strict(),
   addSampleFolder: emptySchema,
   removeSampleFolder: z.object({ path: z.string().min(1).max(1000) }).strict(),
   reindexSamples: emptySchema,
