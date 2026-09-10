@@ -76,7 +76,7 @@ try {
   assert.match(body, /Cubase \(MIDI Remote\)/);
 
   await page.getByRole('button', { name: /^assist$/i }).click();
-  await page.getByLabel('Message Demo agent').fill('Set tempo to 124 BPM');
+  await page.getByLabel(/^Message /).fill('Set tempo to 124 BPM');
   await page.getByRole('button', { name: 'Send message', exact: true }).click();
   await page.getByRole('button', { name: 'Approve', exact: true }).waitFor({ timeout: 20000 });
   assert.equal(await page.getByTestId('tempo').innerText(), '120', 'No write before approval.');

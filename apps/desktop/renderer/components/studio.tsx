@@ -8,6 +8,7 @@ import type {
   Activity,
   ToolName,
   AdapterId,
+  ProviderId,
 } from '@orchestrai/shared-types';
 
 declare global {
@@ -98,6 +99,7 @@ export function Studio({ setup = false }: { setup?: boolean }) {
   const [conversationId, setConversationId] = useState('');
   const [consoleOpen, setConsoleOpen] = useState(false);
   const [adapter, setAdapter] = useState<AdapterId>('mock');
+  const [partner, setPartner] = useState<ProviderId>('demo');
   const end = useRef<HTMLDivElement>(null);
   const mounted = useRef(true);
   useEffect(() => {
@@ -149,7 +151,7 @@ export function Studio({ setup = false }: { setup?: boolean }) {
     }
   };
   const connect = async () => {
-    const next = await run((api) => api.connect({ adapter }));
+    const next = await run((api) => api.connect({ adapter, provider: partner }));
     if (next?.runtime?.connected) router.push('/workspace/');
   };
   const create = async () => {
@@ -178,6 +180,48 @@ export function Studio({ setup = false }: { setup?: boolean }) {
   const connected = !!runtime?.connected;
   // The bridge is offered only when it could actually connect; the reason a
   // producer cannot use it is more useful than a button that always fails.
+  const agentById = (id: string) => data?.agents.find((agent) => agent.id === id);
+  const partnerOptions = [
+    {
+      id: 'demo' as const,
+      title: 'Demo agent',
+      subtitle: 'Deterministic · No account needed',
+      detail: 'Fixed local responses for exercising the workspace. Never a model answer.',
+      agent: undefined,
+      unavailable: null as string | null,
+    },
+    ...(
+      [
+        ['claude', 'claude-code', 'Claude Code', 'claude auth login'],
+        ['codex', 'codex', 'Codex', 'codex login'],
+      ] as const
+    ).map(([id, discoveryId, title, signIn]) => {
+      const agent = agentById(discoveryId);
+      const unavailable = !agent?.installed
+        ? `Unavailable: the ${title} CLI was not found on this machine.`
+        : agent.authentication === 'unauthenticated'
+          ? `Installed but not signed in. Run: ${signIn}`
+          : agent.authentication === 'failed'
+            ? `Verification failed: ${agent.errors[0] ?? 'unknown reason'}`
+            : agent.authentication === 'unverified'
+              ? 'Installed. Verify the sign-in before connecting.'
+              : null;
+      return {
+        id,
+        title,
+        subtitle:
+          agent?.authentication === 'authenticated'
+            ? `Signed in${agent.account ? ` · ${agent.account}` : ''}`
+            : 'Live model session · Uses its own sign-in',
+        detail:
+          `Sends this conversation and project state to ${title}'s model provider. ${agent?.version ?? ''}`.trim(),
+        agent,
+        unavailable,
+      };
+    }),
+  ];
+  const partnerBlocked =
+    partnerOptions.find((option) => option.id === partner)?.unavailable ?? null;
   const bridgeUnavailable = data?.midi
     ? data.midi.available
       ? null
@@ -186,6 +230,11 @@ export function Studio({ setup = false }: { setup?: boolean }) {
   useEffect(() => {
     if (adapter === 'bridge' && bridgeUnavailable) setAdapter('mock');
   }, [adapter, bridgeUnavailable]);
+  useEffect(() => {
+    // A partner that stops being usable must not stay selected: the Demo agent
+    // is the honest default.
+    if (partner !== 'demo' && partnerBlocked) setPartner('demo');
+  }, [partner, partnerBlocked]);
   const mode = runtime?.mode ?? data?.history.mode ?? 'ask';
   const project = runtime?.project;
   const calls = data?.history.activities ?? [];
@@ -352,36 +401,64 @@ export function Studio({ setup = false }: { setup?: boolean }) {
                   Refresh detection ↻
                 </button>
               </div>
-              <div className="mb-3 flex items-center gap-4 rounded-xl border border-accent/40 bg-accent/5 p-4 tall:mb-4">
-                <div className="shrink-0 rounded-lg bg-accent/10 p-3 text-accent">
-                  <Icon kind="spark" />
-                </div>
-                <div className="min-w-0">
-                  <h3 className="text-sm font-medium">Demo agent</h3>
-                  <p className="mt-1 text-xs text-muted">Deterministic · No account needed</p>
-                </div>
-                <Icon kind="check" className="ml-auto text-accent" />
+              <div role="radiogroup" aria-label="Creative partner" className="space-y-2">
+                {partnerOptions.map((option) => {
+                  const selected = partner === option.id;
+                  const blocked = !!option.unavailable;
+                  return (
+                    <div
+                      key={option.id}
+                      className={`rounded-xl border p-4 transition ${
+                        selected ? 'border-accent/40 bg-accent/5' : 'border-line'
+                      }`}
+                    >
+                      <div className="flex items-center gap-4">
+                        <button
+                          role="radio"
+                          aria-checked={selected}
+                          disabled={blocked || busy}
+                          onClick={() => setPartner(option.id)}
+                          className="flex min-w-0 flex-1 items-center gap-4 text-left disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          <div className="shrink-0 rounded-lg bg-accent/10 p-3 text-accent">
+                            <Icon kind="spark" />
+                          </div>
+                          <div className="min-w-0">
+                            <h3 className="text-sm font-medium">{option.title}</h3>
+                            <p className="mt-1 truncate text-xs text-muted">{option.subtitle}</p>
+                          </div>
+                        </button>
+                        {selected && !blocked && (
+                          <span className="shrink-0 text-accent">
+                            <Icon kind="check" />
+                          </span>
+                        )}
+                        {option.agent?.installed &&
+                          option.agent.authentication !== 'authenticated' && (
+                            <button
+                              onClick={() =>
+                                void run((api) =>
+                                  api.verify({ agent: option.id as 'claude' | 'codex' }),
+                                )
+                              }
+                              disabled={busy || !desktop}
+                              className="shrink-0 rounded-lg border border-line px-2.5 py-1.5 text-[11px] text-muted transition hover:border-muted hover:text-paper disabled:opacity-40"
+                            >
+                              Verify sign-in
+                            </button>
+                          )}
+                      </div>
+                      <p className="mt-3 border-t border-line/60 pt-3 text-[11px] leading-5 text-muted">
+                        {option.unavailable ?? option.detail}
+                      </p>
+                    </div>
+                  );
+                })}
               </div>
-              {(
-                data?.agents ?? [
-                  { id: 'claude', name: 'Claude Code', installed: false, executable: null },
-                  { id: 'codex', name: 'Codex', installed: false, executable: null },
-                ]
-              ).map((agent) => (
-                <div
-                  key={agent.id}
-                  title={agent.executable ?? undefined}
-                  className="flex items-center justify-between gap-3 border-b border-line py-2.5 text-xs tall:py-3"
-                >
-                  <span className="truncate">{agent.name}</span>
-                  <span className="shrink-0 text-muted">
-                    {agent.installed ? 'Detected · Auth unverified' : 'CLI not installed'}
-                  </span>
-                </div>
-              ))}
               <p className="mt-3 text-[11px] leading-5 text-muted tall:mt-4">
-                Live CLI sessions and OpenAI / Anthropic API connections arrive in a later
-                milestone.
+                {partner === 'demo'
+                  ? 'The Demo agent runs locally and sends nothing anywhere.'
+                  : 'A live partner sends this conversation and project state to its model provider. It signs in with its own CLI; OrchestrAI stores no credentials.'}
               </p>
             </section>
           </div>
@@ -428,7 +505,10 @@ export function Studio({ setup = false }: { setup?: boolean }) {
             {runtime?.daw ?? 'Cubase 14 · Mock'} ·{' '}
             {connected ? (runtime?.adapter === 'bridge' ? 'live' : 'mock') : 'disconnected'}
           </Pill>
-          <Pill green={connected}>Demo agent</Pill>
+          <Pill green={connected}>
+            {runtime?.providerLabel ?? 'Demo agent'}
+            {runtime?.providerLive ? ' · live' : ''}
+          </Pill>
           <Link
             href="/"
             aria-label="Connection settings"
@@ -555,8 +635,8 @@ export function Studio({ setup = false }: { setup?: boolean }) {
                   something good.
                 </h2>
                 <p className="mt-5 max-w-sm text-sm leading-7 text-muted">
-                  Explore your session with the local Demo agent. Every action stays visible, and
-                  every change starts with you.
+                  Explore your session with {runtime?.providerLabel ?? 'the Demo agent'}. Every
+                  action stays visible, and every change starts with you.
                 </p>
                 <div className="mt-7 space-y-2">
                   {['Inspect the project', 'Set tempo to 124 BPM', 'Play the session'].map(
@@ -597,7 +677,9 @@ export function Studio({ setup = false }: { setup?: boolean }) {
                         )}
                       </span>
                       <span className="font-medium">
-                        {message.role === 'assistant' ? 'Demo agent' : 'You'}
+                        {/* The provider stored with the message, so a transcript
+                            read later cannot confuse a fixture with a model. */}
+                        {message.role === 'assistant' ? message.provider : 'You'}
                       </span>
                       <time className="ml-auto font-mono text-[9px] text-muted">
                         {new Date(message.timestamp).toLocaleTimeString([], {
@@ -629,7 +711,7 @@ export function Studio({ setup = false }: { setup?: boolean }) {
               className="rounded-xl border border-line bg-panel p-4 focus-within:border-accent/50"
             >
               <label htmlFor="composer" className="sr-only">
-                Message Demo agent
+                Message {runtime?.providerLabel ?? 'Demo agent'}
               </label>
               <textarea
                 id="composer"
@@ -649,7 +731,9 @@ export function Studio({ setup = false }: { setup?: boolean }) {
               <div className="mt-3 flex items-center justify-between">
                 <span className="flex items-center gap-2 text-[10px] text-muted">
                   <Icon kind="spark" />
-                  Demo · Local only<span className="mx-1 text-line">|</span>
+                  {runtime?.providerLabel ?? 'Demo agent'} ·{' '}
+                  {runtime?.providerLive ? 'Live model' : 'Local only'}
+                  <span className="mx-1 text-line">|</span>
                   {mode === 'ask' ? 'Read-only session' : 'Changes need approval'}
                 </span>
                 {busy ? (
@@ -672,7 +756,9 @@ export function Studio({ setup = false }: { setup?: boolean }) {
               </div>
             </form>
             <p className="mt-2 text-center text-[9px] text-muted/60">
-              Demo responses are deterministic.{' '}
+              {runtime?.providerLive
+                ? `${runtime.providerLabel} responses come from a live model.`
+                : 'Demo responses are deterministic.'}{' '}
               {isMock ? 'Your real DAW is not connected.' : 'Writes reach the connected session.'}
             </p>
           </div>

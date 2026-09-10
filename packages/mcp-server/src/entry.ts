@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import path from 'node:path';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
   CubaseBridgeAdapter,
@@ -8,6 +9,8 @@ import {
   type MidiPort,
 } from '@orchestrai/cubase';
 import { DemoProvider } from '@orchestrai/agent-core';
+import { AgentToolChannel, LiveAgentProvider } from '@orchestrai/live-agents';
+import { discoverAgents, verifyAgent, isVerifiable } from '@orchestrai/cli';
 import { Orchestrator } from '@orchestrai/orchestrator';
 import {
   wireSchema,
@@ -18,6 +21,8 @@ import {
   type Activity,
   type AdapterId,
   type MidiStatus,
+  type ProviderId,
+  type AgentProvider,
 } from '@orchestrai/shared-types';
 import { createMcpServer, availableToolDefinitions } from './index';
 
@@ -45,6 +50,65 @@ const orchestration = new Orchestrator(new MockCubaseAdapter(), async (activity)
   await store({ type: 'activity', activity });
 });
 const demo = new DemoProvider();
+let live: LiveAgentProvider | null = null;
+let active: AgentProvider = demo;
+let activeId: ProviderId = 'demo';
+const providerNames: Record<ProviderId, string> = {
+  demo: 'Demo agent',
+  claude: 'Claude Code',
+  codex: 'Codex',
+};
+/**
+ * One channel for however many turns a live agent runs, opened only while a
+ * live provider is selected so no agent surface exists during a demo session.
+ */
+const channel = new AgentToolChannel({
+  list: () => availableToolDefinitions(orchestration),
+  call: async (tool, args) => {
+    const name = tool.startsWith('mcp__orchestrai__')
+      ? tool.slice('mcp__orchestrai__'.length)
+      : tool;
+    return orchestration.request(name, args, agentConversationId, activeId);
+  },
+});
+let agentConversationId = '';
+async function executablesById(): Promise<Partial<Record<ProviderId, string>>> {
+  const discovered = await discoverAgents();
+  const find = (id: string) =>
+    discovered.find((agent: { id: string }) => agent.id === id)?.executable ?? undefined;
+  return { claude: find('claude-code'), codex: find('codex') };
+}
+async function useProvider(id: ProviderId) {
+  if (id === activeId && (id === 'demo' || live)) return;
+  await live?.dispose();
+  live = null;
+  if (id === 'demo') {
+    await channel.stop();
+    active = demo;
+    activeId = 'demo';
+  } else {
+    const executable = (await executablesById())[id];
+    if (!executable) throw new Error(`${providerNames[id]} is not installed.`);
+    await channel.start();
+    live = new LiveAgentProvider({
+      id,
+      name: providerNames[id],
+      executable,
+      proxyEntry: path.join(path.dirname(process.argv[1]), 'agent-mcp.cjs'),
+      nodeExecutable: process.execPath,
+      channelAddress: channel.address,
+      channelToken: channel.token,
+    });
+    await live.initialize();
+    active = live;
+    activeId = id;
+  }
+  await orchestration.useProvider({
+    id: activeId,
+    label: providerNames[activeId],
+    live: activeId !== 'demo',
+  });
+}
 /**
  * The MIDI backend is optional by design, so the bridge is described rather
  * than assumed: the interface shows why it is unavailable instead of offering
@@ -85,13 +149,20 @@ async function control(command: Control): Promise<unknown> {
       return orchestration.state();
     case 'midi':
       return midiStatus();
+    case 'verify': {
+      if (!isVerifiable(command.agent)) throw new Error('The Demo agent needs no verification.');
+      const executable = (await executablesById())[command.agent];
+      if (!executable) throw new Error(`${providerNames[command.agent]} is not installed.`);
+      return { agent: command.agent, ...(await verifyAgent(command.agent, executable)) };
+    }
     case 'connect':
       await demo.initialize();
+      if (command.provider) await useProvider(command.provider);
       if (command.adapter)
         await orchestration.useAdapter(command.adapter, await buildAdapter(command.adapter));
       return orchestration.connect();
     case 'disconnect':
-      await demo.cancel();
+      await active.cancel();
       return orchestration.disconnect();
     case 'mode': {
       const state = await orchestration.setMode(command.mode);
@@ -108,11 +179,11 @@ async function control(command: Control): Promise<unknown> {
     case 'undo':
       return orchestration.undo(command.id, command.conversationId);
     case 'cancel':
-      await demo.cancel();
+      await active.cancel();
       await orchestration.cancel();
       return null;
     case 'chat': {
-      if (chatting) throw new Error('A demo response is already running.');
+      if (chatting) throw new Error(`A ${providerNames[activeId]} response is already running.`);
       chatting = true;
       try {
         const history = historySchema.parse(await store({ type: 'history' }));
@@ -120,7 +191,8 @@ async function control(command: Control): Promise<unknown> {
           (c) => c.id === command.message.conversationId,
         );
         if (!conversation) throw new Error('Conversation not found.');
-        const response = await demo.sendMessage(
+        agentConversationId = conversation.id;
+        const response = await active.sendMessage(
           {
             ...conversation,
             messages: history.messages.filter((m) => m.conversationId === conversation.id),
@@ -130,7 +202,7 @@ async function control(command: Control): Promise<unknown> {
         const results: Activity[] = [];
         for (const call of response.commands)
           results.push(
-            await orchestration.request(call.tool, call.arguments, conversation.id, 'demo'),
+            await orchestration.request(call.tool, call.arguments, conversation.id, activeId),
           );
         const text = [
           response.text,
@@ -142,7 +214,7 @@ async function control(command: Control): Promise<unknown> {
             id: randomUUID(),
             conversationId: conversation.id,
             role: 'assistant',
-            provider: 'Demo',
+            provider: providerNames[activeId],
             content: text,
             timestamp: new Date().toISOString(),
           },

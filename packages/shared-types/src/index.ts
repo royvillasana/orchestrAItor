@@ -6,6 +6,8 @@ export type Mode = z.infer<typeof modeSchema>;
 export const tempoSchema = z.number().finite().min(20).max(300);
 export const adapterIdSchema = z.enum(['mock', 'bridge']);
 export type AdapterId = z.infer<typeof adapterIdSchema>;
+export const providerIdSchema = z.enum(['demo', 'claude', 'codex']);
+export type ProviderId = z.infer<typeof providerIdSchema>;
 export const midiPortSchema = z
   .object({ id: idSchema, name: z.string().max(200), direction: z.enum(['input', 'output']) })
   .strict();
@@ -140,7 +142,11 @@ export const agentSchema = z
     installed: z.boolean(),
     executable: z.string().nullable(),
     status: z.enum(['detected', 'missing', 'unavailable']),
-    authentication: z.literal('unverified'),
+    // Discovery never executes a candidate, so it can only ever report
+    // 'unverified'. The other states come from explicit verification.
+    authentication: z.enum(['unverified', 'authenticated', 'unauthenticated', 'failed']),
+    account: z.string().max(200).nullable(),
+    version: z.string().max(60).nullable(),
     errors: z.array(z.string()),
   })
   .strict();
@@ -172,6 +178,9 @@ export const runtimeStateSchema = z
     capabilities: z.array(capabilitySchema),
     adapter: adapterIdSchema,
     daw: z.string().max(120).nullable(),
+    provider: providerIdSchema,
+    providerLabel: z.string().max(120),
+    providerLive: z.boolean(),
   })
   .strict();
 export type RuntimeState = z.infer<typeof runtimeStateSchema>;
@@ -197,8 +206,15 @@ export const sendSchema = z
   .strict();
 export const controlSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('state') }).strict(),
-  z.object({ type: z.literal('connect'), adapter: adapterIdSchema.optional() }).strict(),
+  z
+    .object({
+      type: z.literal('connect'),
+      adapter: adapterIdSchema.optional(),
+      provider: providerIdSchema.optional(),
+    })
+    .strict(),
   z.object({ type: z.literal('midi') }).strict(),
+  z.object({ type: z.literal('verify'), agent: providerIdSchema }).strict(),
   z.object({ type: z.literal('disconnect') }).strict(),
   z.object({ type: z.literal('mode'), mode: modeSchema }).strict(),
   z.object({ type: z.literal('decision'), decision: decisionSchema }).strict(),
@@ -233,7 +249,10 @@ export type Wire = z.infer<typeof wireSchema>;
 export const ipcInputs = {
   snapshot: emptySchema,
   discover: emptySchema,
-  connect: z.object({ adapter: adapterIdSchema.optional() }).strict(),
+  connect: z
+    .object({ adapter: adapterIdSchema.optional(), provider: providerIdSchema.optional() })
+    .strict(),
+  verify: z.object({ agent: providerIdSchema }).strict(),
   disconnect: emptySchema,
   restart: emptySchema,
   setMode: z.object({ mode: modeSchema }).strict(),

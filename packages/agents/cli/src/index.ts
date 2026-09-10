@@ -1,3 +1,4 @@
+export * from './verify';
 import { access, realpath, stat } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { homedir } from 'node:os';
@@ -76,7 +77,11 @@ export async function discoverAgents(
         installed: executable !== null,
         executable,
         status: executable ? 'detected' : 'missing',
+        // Discovery reports only what exists; authentication requires the
+        // explicit, executing verification step.
         authentication: 'unverified',
+        account: null,
+        version: null,
         errors,
       };
     }),

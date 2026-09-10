@@ -82,19 +82,19 @@ try {
   assert.equal(await page.evaluate(() => typeof window.require), 'undefined');
   assert.equal(await page.evaluate(() => typeof window.process), 'undefined');
   await page.screenshot({ path: 'artifacts/workspace.png', fullPage: true });
-  await page.getByLabel('Message Demo agent').fill('Inspect the project');
+  await page.getByLabel(/^Message /).fill('Inspect the project');
   await page.getByRole('button', { name: 'Send message', exact: true }).click();
   await page.waitForFunction(() =>
     document.body.innerText.includes('project.get_state: succeeded'),
   );
   await page.getByRole('button', { name: /^assist$/i }).click();
-  await page.getByLabel('Message Demo agent').fill('Set tempo to 124 BPM');
+  await page.getByLabel(/^Message /).fill('Set tempo to 124 BPM');
   await page.getByRole('button', { name: 'Send message', exact: true }).click();
   await page.getByRole('button', { name: 'Approve', exact: true }).waitFor();
   assert.equal(await page.getByTestId('tempo').innerText(), '122');
   await page.getByRole('button', { name: 'Cancel', exact: true }).click();
   await page.waitForFunction(() => !document.body.innerText.includes('awaiting approval'));
-  await page.getByLabel('Message Demo agent').fill('Set tempo to 124 BPM');
+  await page.getByLabel(/^Message /).fill('Set tempo to 124 BPM');
   await page.getByRole('button', { name: 'Send message', exact: true }).click();
   await page.getByRole('button', { name: 'Approve', exact: true }).click();
   await page.waitForFunction(
@@ -125,7 +125,7 @@ try {
   assert.equal(restored.messages.length, history.messages.length);
   assert.equal(restored.activities.length, history.activities.length);
   // Only terminate the runtime child belonging to this isolated test application.
-  await page.getByLabel('Message Demo agent').fill('Set tempo to 130 BPM');
+  await page.getByLabel(/^Message /).fill('Set tempo to 130 BPM');
   await page.getByRole('button', { name: 'Send message', exact: true }).click();
   await page.getByRole('button', { name: 'Approve', exact: true }).waitFor();
   const pending = await page.evaluate(async () =>

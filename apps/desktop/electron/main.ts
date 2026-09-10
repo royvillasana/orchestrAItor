@@ -1,11 +1,13 @@
 import { app, BrowserWindow, ipcMain, protocol, session } from 'electron';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
+import { z } from 'zod';
 import { discoverAgents } from '@orchestrai/cli';
 import {
   historySchema,
   snapshotSchema,
   midiStatusSchema,
+  providerIdSchema,
   ipcInputs,
   sendSchema,
   callSchema,
@@ -44,6 +46,18 @@ let db: DatabaseService;
 let runtime: RuntimeService | null = null;
 let state: RuntimeState | null = null;
 let midi: MidiStatus | null = null;
+/** Discovery ids are product names; provider ids are what the runtime selects. */
+const agentKey = (id: string) =>
+  id === 'claude-code' ? 'claude' : id === 'codex' ? 'codex' : 'openai';
+const verificationSchema = z
+  .object({
+    agent: providerIdSchema,
+    authentication: z.enum(['authenticated', 'unauthenticated', 'failed']),
+    account: z.string().nullable(),
+    version: z.string().nullable(),
+    error: z.string().nullable(),
+  })
+  .strict();
 let failure: string | null = null;
 let agents: Snapshot['agents'] = [];
 const logs: LogEntry[] = [];
@@ -131,6 +145,21 @@ async function invoke(method: IpcMethod, input: unknown): Promise<Snapshot> {
       await db.execute({ type: 'interrupt' });
       failure = null;
       await startRuntime();
+    }
+    if (method === 'verify') {
+      const input = ipcInputs.verify.parse(value);
+      const result = verificationSchema.parse(await runtime!.control({ type: 'verify', ...input }));
+      agents = agents.map((agent) =>
+        agentKey(agent.id) === result.agent
+          ? {
+              ...agent,
+              authentication: result.authentication,
+              account: result.account,
+              version: result.version,
+              errors: result.error ? [result.error] : [],
+            }
+          : agent,
+      );
     }
     if (method === 'connect') {
       await runtime!.control({ type: 'connect', ...ipcInputs.connect.parse(value) });

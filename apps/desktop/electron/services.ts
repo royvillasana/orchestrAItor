@@ -136,6 +136,34 @@ class ChildTransport implements Transport {
     });
   }
 }
+/**
+ * A deliberate allowlist rather than the whole environment. The runtime needs
+ * PATH to discover agent CLIs, and a CLI needs HOME and USER to find its own
+ * login — macOS keeps those credentials in the Keychain, whose lookup fails
+ * without USER. Everything else stays behind: the environment of a desktop
+ * session can hold unrelated secrets, and a live agent process would inherit
+ * them.
+ */
+export const FORWARDED_ENVIRONMENT = [
+  'PATH',
+  'HOME',
+  'USER',
+  'LOGNAME',
+  'SHELL',
+  'LANG',
+  'LC_ALL',
+  'TMPDIR',
+  'SystemRoot',
+  'APPDATA',
+  'LOCALAPPDATA',
+  'USERPROFILE',
+  'PATHEXT',
+] as const;
+export function runtimeEnvironment(source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ELECTRON_RUN_AS_NODE: '1' };
+  for (const key of FORWARDED_ENVIRONMENT) if (source[key] !== undefined) env[key] = source[key];
+  return env;
+}
 export class RuntimeService {
   private child: ChildProcess | null = null;
   private client: Client | null = null;
@@ -159,7 +187,7 @@ export class RuntimeService {
     this.closing = false;
     const child = fork(path.join(this.directory, 'runtime.cjs'), [], {
       execPath: process.execPath,
-      env: { ELECTRON_RUN_AS_NODE: '1' },
+      env: runtimeEnvironment(),
       stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
     });
     this.child = child;

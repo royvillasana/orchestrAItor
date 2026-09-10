@@ -19,7 +19,8 @@
     "test": "pnpm build:desktop && vitest run",
     "test:smoke": "node scripts/smoke.mjs",
     "install:cubase-script": "node scripts/install-cubase-script.mjs",
-    "test:smoke-bridge": "node scripts/smoke-bridge.mjs"
+    "test:smoke-bridge": "node scripts/smoke-bridge.mjs",
+    "test:smoke-agent": "node scripts/smoke-agent.mjs"
   },
   "devDependencies": {
     "@eslint/js": "9.39.1",

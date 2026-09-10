@@ -128,6 +128,18 @@ importers:
         specifier: 3.25.76
         version: 3.25.76
 
+  packages/agents/live:
+    dependencies:
+      '@modelcontextprotocol/sdk':
+        specifier: 1.30.0
+        version: 1.30.0(zod@3.25.76)
+      '@orchestrai/shared-types':
+        specifier: workspace:*
+        version: link:../../shared-types
+      zod:
+        specifier: 3.25.76
+        version: 3.25.76
+
   packages/agents/openai:
     dependencies:
       '@orchestrai/agent-core':
@@ -150,9 +162,15 @@ importers:
       '@orchestrai/agent-core':
         specifier: workspace:*
         version: link:../agent-core
+      '@orchestrai/cli':
+        specifier: workspace:*
+        version: link:../agents/cli
       '@orchestrai/cubase':
         specifier: workspace:*
         version: link:../adapters/cubase
+      '@orchestrai/live-agents':
+        specifier: workspace:*
+        version: link:../agents/live
       '@orchestrai/orchestrator':
         specifier: workspace:*
         version: link:../orchestrator

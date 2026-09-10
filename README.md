@@ -114,6 +114,39 @@ Three layers of automated coverage, each closer to a real session:
 
 What remains unverified is exactly one thing: **Cubase's own interpretation of those API calls**. Everything up to the moment Cubase receives them is covered. To close that last gap, follow the setup above with Cubase running — a Steinberg trial license is sufficient — then approve a tempo change and confirm it in Cubase's transport panel. Windows bridge verification is deferred alongside the existing Windows smoke limitation.
 
+## Live agents (Milestone 3)
+
+The **Demo agent** is deterministic and stays the default. Claude Code and Codex can be connected as the creative partner instead, and their tool calls land on the same registry, permission engine, adapter, and Undo as the Demo agent's — there is no second route to the DAW.
+
+```text
+CLI agent → MCP proxy (agent-mcp) → token-guarded local channel → orchestrator
+                                                                → permission engine → adapter
+```
+
+The runtime opens a token-guarded local channel and the CLI is launched with a small MCP stdio proxy that forwards `tools/list` and `tools/call` to it. The channel carries **only** those two operations: an agent cannot approve its own write, select an adapter, or reach persistence. Approval stays a desktop action.
+
+### Setup
+
+Both CLIs use their own existing login; OrchestrAI reads, stores, and forwards no credentials.
+
+1. Sign in where you normally would: `claude auth login` or `codex login`.
+2. In the connection screen, press **Verify sign-in** on that provider. Discovery still never executes anything — verification is a separate, explicit step that runs only the CLI's own status command.
+3. Select the provider and connect. The header, composer, and every message name the provider that produced them.
+
+### Confinement and network
+
+A live agent runs in an empty temporary directory with `--strict-mcp-config`, only `mcp__orchestrai__*` tools allowed, built-in file and shell tools denied, and a bounded turn count. The permission engine remains the real control: an unapproved write reaches nothing.
+
+A live provider **sends the conversation and project state to its model provider** — the first outbound network traffic in this project. The connection screen says so before the session is connected. The runtime child receives a deliberate environment allowlist (`PATH`, `HOME`, `USER`, and a few more) rather than the whole environment, so unrelated secrets in a desktop session are not inherited by an agent process. `USER` is included because macOS keeps CLI credentials in the Keychain and its lookup fails without it.
+
+### What is verified
+
+`pnpm test` covers the channel (token rejection, malformed and oversized messages, and the absence of any approval, adapter, or persistence operation), CLI event parsing, confinement flags, cancellation, failure typing, verification states, and the environment allowlist — all without spending model usage.
+
+`pnpm test:smoke-agent` runs the real thing: it verifies the sign-in, selects Claude Code, connects it alongside the live bridge, lets the model call tools through the permission path, approves the write, and asserts it reached the session. It costs model usage, so it is not part of `pnpm test`, and it skips when the CLI is absent or signed out.
+
+Codex is implemented against the same contract. Its happy path is **unverified here**: the account reached its usage limit during testing, which surfaced as a typed failure naming the CLI's own reason.
+
 ## Local data and recovery
 
 Data lives in Electron's OS application-data directory under `OrchestrAI`:
@@ -139,6 +172,7 @@ pnpm test
 pnpm build
 pnpm test:smoke
 pnpm test:smoke-bridge
+pnpm test:smoke-agent
 pnpm audit --prod
 ```
 
@@ -150,4 +184,4 @@ For development-mode smoke verification, start `pnpm --filter @orchestrai/deskto
 
 ## Next milestones
 
-Milestone 3 introduces sample folders/indexing/preview and MIDI artifacts. Live CLI sessions, API authentication and credential storage, plugin operations, and autonomous Agent mode remain separate integrations. The active implementation checklist is `openspec/changes/add-cubase-midi-bridge/tasks.md`; Milestone 1 is archived under `openspec/changes/archive/`.
+Sample folders, indexing, preview, and MIDI artifacts remain the next milestone. API credential storage, plugin operations, autonomous Agent mode, and token-level streaming into the transcript remain separate integrations. The active implementation checklist is `openspec/changes/add-cubase-midi-bridge/tasks.md`; Milestone 1 is archived under `openspec/changes/archive/`.

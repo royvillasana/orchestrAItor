@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import {
   type AdapterId,
+  type ProviderId,
   activitySchema,
   errorText,
   resultSchema,
@@ -21,6 +22,11 @@ export class Orchestrator {
   private queue: Promise<unknown> = Promise.resolve();
   private calls = new Map<string, Activity>();
   private adapterId: AdapterId = 'mock';
+  private provider: { id: ProviderId; label: string; live: boolean } = {
+    id: 'demo',
+    label: 'Demo agent',
+    live: false,
+  };
   constructor(
     private adapter: DawAdapter,
     private readonly persist: (activity: Activity) => Promise<void>,
@@ -32,6 +38,13 @@ export class Orchestrator {
    * disconnected, so a live session can never be swapped underneath a caller
    * holding an approval.
    */
+  /** Provider identity travels with every message, so it is runtime state. */
+  useProvider(provider: { id: ProviderId; label: string; live: boolean }) {
+    return this.serial(async () => {
+      this.provider = provider;
+      return this.state();
+    });
+  }
   useAdapter(id: AdapterId, adapter: DawAdapter) {
     return this.serial(async () => {
       if (this.connected) throw new Error('Disconnect before changing the DAW adapter.');
@@ -54,6 +67,9 @@ export class Orchestrator {
       capabilities: await this.adapter.getCapabilities(),
       adapter: this.adapterId,
       daw: this.connected ? this.dawLabel() : null,
+      provider: this.provider.id,
+      providerLabel: this.provider.label,
+      providerLive: this.provider.live,
     };
   }
   async tools() {

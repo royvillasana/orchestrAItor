@@ -9,6 +9,7 @@ await build({
     preload: 'apps/desktop/electron/preload.ts',
     runtime: 'packages/mcp-server/src/entry.ts',
     database: 'apps/desktop/electron/database-worker.ts',
+    'agent-mcp': 'packages/agents/live/src/proxy-entry.ts',
   },
   outdir: 'apps/desktop/dist',
   outExtension: { '.js': '.cjs' },
