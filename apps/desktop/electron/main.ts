@@ -5,6 +5,7 @@ import { discoverAgents } from '@orchestrai/cli';
 import {
   historySchema,
   snapshotSchema,
+  midiStatusSchema,
   ipcInputs,
   sendSchema,
   callSchema,
@@ -15,6 +16,7 @@ import {
   type IpcMethod,
   type Activity,
   type RuntimeState,
+  type MidiStatus,
 } from '@orchestrai/shared-types';
 import { DatabaseService, RuntimeService } from './services';
 import { assetResponse, trustedURL, trustedSender } from './security';
@@ -41,6 +43,7 @@ let window: BrowserWindow | null = null;
 let db: DatabaseService;
 let runtime: RuntimeService | null = null;
 let state: RuntimeState | null = null;
+let midi: MidiStatus | null = null;
 let failure: string | null = null;
 let agents: Snapshot['agents'] = [];
 const logs: LogEntry[] = [];
@@ -98,6 +101,7 @@ async function snapshot(): Promise<Snapshot> {
   }
   return snapshotSchema.parse({
     runtime: state,
+    midi,
     agents,
     history: lastHistory,
     logs,
@@ -109,7 +113,13 @@ async function invoke(method: IpcMethod, input: unknown): Promise<Snapshot> {
   await ready;
   try {
     if (failure && !['snapshot', 'discover', 'restart'].includes(method)) throw new Error(failure);
-    if (method === 'discover') agents = await discoverAgents();
+    if (method === 'discover') {
+      agents = await discoverAgents();
+      // Backend probing loads an optional native module, so it happens on an
+      // explicit refresh rather than on every snapshot poll.
+      if (runtime && !failure)
+        midi = midiStatusSchema.parse(await runtime.control({ type: 'midi' }));
+    }
     if (method === 'restart') {
       await runtime?.close();
       if (databaseFailed) {
@@ -123,7 +133,7 @@ async function invoke(method: IpcMethod, input: unknown): Promise<Snapshot> {
       await startRuntime();
     }
     if (method === 'connect') {
-      await runtime!.control({ type: 'connect' });
+      await runtime!.control({ type: 'connect', ...ipcInputs.connect.parse(value) });
       failure = null;
     }
     if (method === 'disconnect') await runtime!.control({ type: 'disconnect' });
@@ -259,6 +269,12 @@ const ready = app
     await db.ready;
     agents = await discoverAgents();
     await startRuntime();
+    try {
+      midi = midiStatusSchema.parse(await runtime!.control({ type: 'midi' }));
+    } catch (error) {
+      // A missing MIDI backend is an expected state, not a startup failure.
+      log('midi.unavailable', errorText(error));
+    }
   })
   .catch((error) => {
     failure = errorText(error);

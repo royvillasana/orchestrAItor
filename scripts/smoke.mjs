@@ -52,6 +52,16 @@ try {
   let page = await launch();
   await page.screenshot({ path: 'artifacts/connections.png', fullPage: true });
   await assertFits(page, 'The connection screen');
+  // This machine ships no MIDI backend, so the live bridge must present itself
+  // as unavailable rather than as a connection that will fail.
+  const bridge = page.getByRole('radio', { name: /Cubase . Live bridge/ });
+  await bridge.waitFor();
+  assert.equal(await bridge.isDisabled(), true);
+  assert.match(await bridge.innerText(), /Unavailable:/);
+  assert.equal(
+    await page.getByRole('radio', { name: /Cubase 14 . Mock/ }).getAttribute('aria-checked'),
+    'true',
+  );
   const button = page.getByRole('button', { name: 'Open demo studio' });
   await button.click({ timeout: 25000 });
   await page.getByRole('heading', { name: 'Studio conversation' }).waitFor();
@@ -59,6 +69,7 @@ try {
     () => document.querySelector('[data-testid="tempo"]')?.textContent === '122',
   );
   await assertFits(page, 'The workspace');
+  assert.match(await page.locator('header').first().innerText(), /mock/i);
   assert.equal(await page.evaluate(() => typeof window.require), 'undefined');
   assert.equal(await page.evaluate(() => typeof window.process), 'undefined');
   await page.screenshot({ path: 'artifacts/workspace.png', fullPage: true });

@@ -1,6 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { MockCubaseAdapter } from '@orchestrai/cubase';
+import {
+  CubaseBridgeAdapter,
+  MockCubaseAdapter,
+  PlatformMidiTransport,
+  type MidiPort,
+} from '@orchestrai/cubase';
 import { DemoProvider } from '@orchestrai/agent-core';
 import { Orchestrator } from '@orchestrai/orchestrator';
 import {
@@ -10,6 +15,8 @@ import {
   type StoreCommand,
   type Control,
   type Activity,
+  type AdapterId,
+  type MidiStatus,
 } from '@orchestrai/shared-types';
 import { createMcpServer, availableToolDefinitions } from './index';
 
@@ -37,14 +44,55 @@ const orchestration = new Orchestrator(new MockCubaseAdapter(), async (activity)
   await store({ type: 'activity', activity });
 });
 const demo = new DemoProvider();
+/**
+ * The MIDI backend is optional by design, so the bridge is described rather
+ * than assumed: the interface shows why it is unavailable instead of offering
+ * a connection that cannot succeed.
+ */
+async function midiStatus(): Promise<MidiStatus> {
+  const transport = new PlatformMidiTransport();
+  const status = await transport.status();
+  if (!status.available)
+    return { available: false, reason: status.reason, remedy: status.remedy, ports: [] };
+  let ports: MidiPort[] = [];
+  try {
+    ports = await transport.listPorts();
+  } catch (error) {
+    return { available: false, reason: errorText(error), remedy: null, ports: [] };
+  }
+  return { available: true, reason: null, remedy: null, ports };
+}
+const bridgePortName = 'OrchestrAI Bridge';
+async function buildAdapter(id: AdapterId) {
+  if (id === 'mock') return new MockCubaseAdapter();
+  const status = await midiStatus();
+  if (!status.available)
+    throw new Error(status.reason ?? 'No MIDI backend is available for the Cubase bridge.');
+  const match = (direction: 'input' | 'output') =>
+    status.ports.find((port) => port.direction === direction && port.name.includes(bridgePortName));
+  const input = match('input');
+  const output = match('output');
+  if (!input || !output)
+    throw new Error(
+      `No "${bridgePortName}" MIDI port pair was found. Install the OrchestrAI driver script in Cubase and pair it in the MIDI Remote Manager.`,
+    );
+  return new CubaseBridgeAdapter(new PlatformMidiTransport(), {
+    input: input.id,
+    output: output.id,
+  });
+}
 const server = createMcpServer(orchestration);
 let chatting = false;
 async function control(command: Control): Promise<unknown> {
   switch (command.type) {
     case 'state':
       return orchestration.state();
+    case 'midi':
+      return midiStatus();
     case 'connect':
       await demo.initialize();
+      if (command.adapter)
+        await orchestration.useAdapter(command.adapter, await buildAdapter(command.adapter));
       return orchestration.connect();
     case 'disconnect':
       await demo.cancel();

@@ -1,0 +1,8 @@
+{
+  "name": "@orchestrai/cubase-driver-script",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cubase MIDI Remote driver script. CommonJS so the shipped artifact itself is loadable by the parity tests.",
+  "type": "commonjs",
+  "main": "orchestrai_bridge.js"
+}

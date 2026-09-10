@@ -59,7 +59,7 @@ Electron main uses an MCP client over private stdio to reach the runtime. The ch
 
 The renderer has context isolation and sandbox enabled, Node integration disabled, an allowlisted preload API, frame/origin checks, and restricted navigation. Production CSP hashes the inline hydration scripts in the exported HTML. Privileged work uses typed IPC only. The application protocol rejects traversal and symlink escapes outside the export directory.
 
-Available normalized tools:
+Available normalized tools (the mock supports all of them; a live bridge exposes what its handshake reports):
 
 - `project.get_state`
 - `project.get_tempo`
@@ -70,6 +70,33 @@ Available normalized tools:
 Ask exposes reads and denies writes at execution time. Assist requires approval for every write. Approvals bind immutable arguments to a request and session, expire after five minutes, are consumed once, and are invalidated on cancellation, mode change, disconnect, or restart. Writes are serialized and capability-checked again immediately before execution.
 
 The bundled MCP entry is intended to be supervised by the desktop. Starting it separately initializes an isolated, disconnected server; without its trusted persistence channel, it fails closed. Connecting external CLI agents is future work.
+
+## Cubase bridge (Milestone 2)
+
+Cubase exposes no local HTTP or IPC surface, so the bridge speaks to a **MIDI Remote driver script** running inside Cubase over a MIDI port pair. The connection screen offers **Cubase 14 · Mock** and **Cubase · Live bridge** as separate choices. A bridge that cannot connect stays disconnected and says why; it is never silently replaced by the mock.
+
+Requests and responses are System Exclusive frames:
+
+```text
+F0 7D <protocol> <kind> <correlation> <len-hi> <len-lo> <payload…> <checksum> F7
+```
+
+Payloads are JSON encoded 8-to-7 so arbitrary UTF-8 survives MIDI, capped at 4 KB, and never fragmented. Every request carries a correlation value and a timeout; a response that never arrives fails the request and disconnects the bridge, so a dropped write is never reported as applied. On connect, a handshake exchanges protocol versions and returns the Cubase version and the operations the script implements — **tool exposure comes from that report**, not from a static list, and a protocol mismatch fails the connection naming both versions.
+
+### Installing the driver script
+
+Copy `resources/cubase/orchestrai_bridge.js` into Cubase's MIDI Remote driver scripts folder:
+
+- macOS: `~/Documents/Steinberg/Cubase/MIDI Remote/Driver Scripts/Local/OrchestrAI/OrchestrAI_Bridge/`
+- Windows: `%USERPROFILE%\Documents\Steinberg\Cubase\MIDI Remote\Driver Scripts\Local\OrchestrAI\OrchestrAI_Bridge\`
+
+Create a virtual MIDI port pair named `OrchestrAI Bridge` (macOS: Audio MIDI Setup → IAC Driver; Windows: loopMIDI or similar), pair it in Cubase's MIDI Remote Manager, then choose **Refresh detection** in OrchestrAI. Targets Cubase 12 and newer.
+
+The MIDI backend is an **optional** dependency, deliberately not installed by default, so `pnpm install` still never triggers an Electron native rebuild. Without it the bridge reports itself unavailable with the install command, and the mock stays fully usable. Install it with `pnpm add -w -D @julusian/midi`.
+
+### What is verified, and what is not
+
+Automated tests exercise the real protocol end to end over an in-process loopback against a simulated Cubase peer, and assert that the **shipped driver script** encodes and decodes byte-for-byte identically to the host implementation. Live control of Cubase is **not** covered by the automated suite — this repository has no Cubase installation. To verify manually: install the script, pair the ports, connect the live bridge, confirm the header shows the Cubase version and `live`, then approve a tempo change and confirm it in Cubase's transport panel. Windows bridge verification is deferred alongside the existing Windows smoke limitation.
 
 ## Local data and recovery
 
@@ -106,4 +133,4 @@ For development-mode smoke verification, start `pnpm --filter @orchestrai/deskto
 
 ## Next milestones
 
-Milestone 2 introduces the real Cubase MIDI Remote/virtual MIDI bridge and capability handshake. Milestone 3 introduces sample folders/indexing/preview and MIDI artifacts. Live CLI sessions, API authentication and credential storage, plugin operations, and autonomous Agent mode remain separate integrations. The active implementation checklist is `openspec/changes/setup-orchestrai-desktop/tasks.md`.
+Milestone 3 introduces sample folders/indexing/preview and MIDI artifacts. Live CLI sessions, API authentication and credential storage, plugin operations, and autonomous Agent mode remain separate integrations. The active implementation checklist is `openspec/changes/add-cubase-midi-bridge/tasks.md`; Milestone 1 is archived under `openspec/changes/archive/`.

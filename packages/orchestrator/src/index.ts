@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import {
+  type AdapterId,
   activitySchema,
   errorText,
   resultSchema,
@@ -19,11 +20,26 @@ export class Orchestrator {
   private connected = false;
   private queue: Promise<unknown> = Promise.resolve();
   private calls = new Map<string, Activity>();
+  private adapterId: AdapterId = 'mock';
   constructor(
-    private readonly adapter: DawAdapter,
+    private adapter: DawAdapter,
     private readonly persist: (activity: Activity) => Promise<void>,
     private readonly now = Date.now,
   ) {}
+  /**
+   * Adapter choice is an application decision, never an agent one: this is
+   * reachable only over the trusted control channel, and only while
+   * disconnected, so a live session can never be swapped underneath a caller
+   * holding an approval.
+   */
+  useAdapter(id: AdapterId, adapter: DawAdapter) {
+    return this.serial(async () => {
+      if (this.connected) throw new Error('Disconnect before changing the DAW adapter.');
+      this.adapter = adapter;
+      this.adapterId = id;
+      return this.state();
+    });
+  }
   private serial<T>(work: () => Promise<T>): Promise<T> {
     const result = this.queue.then(work, work);
     this.queue = result.catch(() => undefined);
@@ -36,6 +52,8 @@ export class Orchestrator {
       mode: this.mode,
       project: this.connected ? await this.adapter.getProjectState() : null,
       capabilities: await this.adapter.getCapabilities(),
+      adapter: this.adapterId,
+      daw: this.connected ? this.dawLabel() : null,
     };
   }
   async tools() {
@@ -45,6 +63,10 @@ export class Orchestrator {
         (this.mode === 'assist' || c.risk === 'read') &&
         toolNameSchema.safeParse(c.id).success,
     );
+  }
+  private dawLabel() {
+    const named = this.adapter as DawAdapter & { connectedDaw?: string | null };
+    return named.connectedDaw ?? (this.adapterId === 'mock' ? 'Cubase 14 (mock)' : 'Cubase');
   }
   connect() {
     return this.serial(async () => {

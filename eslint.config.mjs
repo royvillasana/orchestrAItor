@@ -12,4 +12,18 @@ export default ts.config(
       '@typescript-eslint/no-explicit-any': 'error',
     },
   },
+  {
+    // The Cubase driver script runs inside Cubase's CommonJS script host, not
+    // in this project's module system, and probes for its API with require().
+    files: ['resources/cubase/**/*.js'],
+    languageOptions: { sourceType: 'commonjs', ecmaVersion: 5 },
+    rules: {
+      '@typescript-eslint/no-require-imports': 'off',
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { caughtErrors: 'none', argsIgnorePattern: '^_' },
+      ],
+      'no-var': 'off',
+    },
+  },
 );

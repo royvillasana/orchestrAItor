@@ -1,3 +1,7 @@
+export * from './transport';
+export * from './protocol';
+export * from './bridge';
+export * from './simulated';
 import {
   projectSchema,
   commandSchema,

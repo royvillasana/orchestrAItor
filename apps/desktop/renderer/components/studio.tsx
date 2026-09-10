@@ -2,7 +2,13 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import type { Snapshot, OrchestraAPI, Activity, ToolName } from '@orchestrai/shared-types';
+import type {
+  Snapshot,
+  OrchestraAPI,
+  Activity,
+  ToolName,
+  AdapterId,
+} from '@orchestrai/shared-types';
 
 declare global {
   interface Window {
@@ -91,6 +97,7 @@ export function Studio({ setup = false }: { setup?: boolean }) {
   const [content, setContent] = useState('');
   const [conversationId, setConversationId] = useState('');
   const [consoleOpen, setConsoleOpen] = useState(false);
+  const [adapter, setAdapter] = useState<AdapterId>('mock');
   const end = useRef<HTMLDivElement>(null);
   const mounted = useRef(true);
   useEffect(() => {
@@ -142,7 +149,7 @@ export function Studio({ setup = false }: { setup?: boolean }) {
     }
   };
   const connect = async () => {
-    const next = await run((api) => api.connect({}));
+    const next = await run((api) => api.connect({ adapter }));
     if (next?.runtime?.connected) router.push('/workspace/');
   };
   const create = async () => {
@@ -169,6 +176,18 @@ export function Studio({ setup = false }: { setup?: boolean }) {
   };
   const runtime = data?.runtime;
   const connected = !!runtime?.connected;
+  // The bridge is offered only when it could actually connect; the reason a
+  // producer cannot use it is more useful than a button that always fails.
+  const bridgeUnavailable = data?.midi
+    ? data.midi.available
+      ? data.midi.ports.some((port) => port.name.includes('OrchestrAI Bridge'))
+        ? null
+        : 'Unavailable: no "OrchestrAI Bridge" MIDI port pair was found. Install the driver script in Cubase and pair it in the MIDI Remote Manager.'
+      : `Unavailable: ${data.midi.reason ?? 'no MIDI backend.'}${data.midi.remedy ? ` ${data.midi.remedy}` : ''}`
+    : 'Unavailable: MIDI detection has not run yet. Choose Refresh detection.';
+  useEffect(() => {
+    if (adapter === 'bridge' && bridgeUnavailable) setAdapter('mock');
+  }, [adapter, bridgeUnavailable]);
   const mode = runtime?.mode ?? data?.history.mode ?? 'ask';
   const project = runtime?.project;
   const calls = data?.history.activities ?? [];
@@ -250,23 +269,60 @@ export function Studio({ setup = false }: { setup?: boolean }) {
                 </h2>
                 <Icon kind="wave" className="text-muted" />
               </div>
-              <div className="rounded-xl border border-accent/40 bg-accent/5 p-4 tall:p-5">
-                <div className="flex items-center gap-4">
-                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-raised text-paper tall:h-12 tall:w-12">
-                    <Icon kind="wave" />
-                  </div>
-                  <div className="min-w-0">
-                    <h3 className="font-medium">Cubase 14</h3>
-                    <p className="mt-1 text-xs text-muted">Mock adapter · Local sandbox</p>
-                  </div>
-                  <span className="ml-auto text-accent">
-                    <Icon kind="check" />
-                  </span>
-                </div>
-                <p className="mt-4 border-t border-accent/10 pt-3 text-xs leading-5 text-muted tall:mt-5 tall:pt-4 tall:leading-6">
-                  Explore a fixture project, tempo, and transport. Your real Cubase projects are
-                  untouched.
-                </p>
+              <div role="radiogroup" aria-label="DAW adapter" className="space-y-2">
+                {(
+                  [
+                    {
+                      id: 'mock',
+                      title: 'Cubase 14 · Mock',
+                      subtitle: 'Deterministic fixture · Local sandbox',
+                      detail:
+                        'Explore a fixture project, tempo, and transport. Your real Cubase projects are untouched.',
+                      unavailable: null,
+                    },
+                    {
+                      id: 'bridge',
+                      title: 'Cubase · Live bridge',
+                      subtitle: 'MIDI Remote · Changes your open session',
+                      detail:
+                        'Requires Cubase 12 or newer with the OrchestrAI driver script installed and paired.',
+                      unavailable: bridgeUnavailable,
+                    },
+                  ] as const
+                ).map((option) => {
+                  const selected = adapter === option.id;
+                  const blocked = !!option.unavailable;
+                  return (
+                    <button
+                      key={option.id}
+                      role="radio"
+                      aria-checked={selected}
+                      disabled={blocked || busy}
+                      onClick={() => setAdapter(option.id)}
+                      className={`w-full rounded-xl border p-4 text-left transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                        selected ? 'border-accent/40 bg-accent/5' : 'border-line hover:border-muted'
+                      }`}
+                    >
+                      <div className="flex items-center gap-4">
+                        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-raised text-paper">
+                          <Icon kind="wave" />
+                        </div>
+                        <div className="min-w-0">
+                          <h3 className="font-medium">{option.title}</h3>
+                          <p className="mt-1 text-xs text-muted">{option.subtitle}</p>
+                        </div>
+                        {selected && (
+                          <span className="ml-auto text-accent">
+                            <Icon kind="check" />
+                          </span>
+                        )}
+                      </div>
+                      <p className="mt-3 border-t border-line/60 pt-3 text-xs leading-5 text-muted">
+                        {option.unavailable ?? option.detail}
+                      </p>
+                    </button>
+                  );
+                })}
               </div>
               <div className="mt-4 flex flex-wrap gap-2 tall:mt-5">
                 {['Ableton Live', 'Logic Pro', 'REAPER'].map((name) => (
@@ -345,7 +401,11 @@ export function Studio({ setup = false }: { setup?: boolean }) {
               onClick={() => void connect()}
               className="flex shrink-0 items-center gap-8 rounded-xl bg-accent px-6 py-3.5 text-sm font-semibold text-ink transition hover:bg-accent/90 disabled:opacity-40 tall:py-4"
             >
-              {busy ? 'Connecting…' : 'Open demo studio'}
+              {busy
+                ? 'Connecting…'
+                : adapter === 'bridge'
+                  ? 'Connect live session'
+                  : 'Open demo studio'}
               <Icon kind="arrow" />
             </button>
           </div>
@@ -360,7 +420,10 @@ export function Studio({ setup = false }: { setup?: boolean }) {
       <header className="flex h-[72px] shrink-0 items-center justify-between border-b border-line px-6">
         {brand}
         <div className="flex items-center gap-3">
-          <Pill green={connected}>Cubase 14 · Mock {connected ? 'connected' : 'disconnected'}</Pill>
+          <Pill green={connected}>
+            {runtime?.daw ?? 'Cubase 14 · Mock'} ·{' '}
+            {connected ? (runtime?.adapter === 'bridge' ? 'live' : 'mock') : 'disconnected'}
+          </Pill>
           <Pill green={connected}>Demo agent</Pill>
           <Link
             href="/"

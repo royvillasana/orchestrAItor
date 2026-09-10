@@ -4,6 +4,20 @@ export const idSchema = z.string().min(1).max(100);
 export const modeSchema = z.enum(['ask', 'assist']);
 export type Mode = z.infer<typeof modeSchema>;
 export const tempoSchema = z.number().finite().min(20).max(300);
+export const adapterIdSchema = z.enum(['mock', 'bridge']);
+export type AdapterId = z.infer<typeof adapterIdSchema>;
+export const midiPortSchema = z
+  .object({ id: idSchema, name: z.string().max(200), direction: z.enum(['input', 'output']) })
+  .strict();
+export const midiStatusSchema = z
+  .object({
+    available: z.boolean(),
+    reason: z.string().max(500).nullable(),
+    remedy: z.string().max(500).nullable(),
+    ports: z.array(midiPortSchema),
+  })
+  .strict();
+export type MidiStatus = z.infer<typeof midiStatusSchema>;
 export const capabilitySchema = z
   .object({
     id: idSchema,
@@ -156,12 +170,15 @@ export const runtimeStateSchema = z
     mode: modeSchema,
     project: projectSchema.nullable(),
     capabilities: z.array(capabilitySchema),
+    adapter: adapterIdSchema,
+    daw: z.string().max(120).nullable(),
   })
   .strict();
 export type RuntimeState = z.infer<typeof runtimeStateSchema>;
 export const snapshotSchema = z
   .object({
     runtime: runtimeStateSchema.nullable(),
+    midi: midiStatusSchema.nullable(),
     agents: z.array(agentSchema),
     history: historySchema,
     logs: z.array(logSchema),
@@ -180,7 +197,8 @@ export const sendSchema = z
   .strict();
 export const controlSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('state') }).strict(),
-  z.object({ type: z.literal('connect') }).strict(),
+  z.object({ type: z.literal('connect'), adapter: adapterIdSchema.optional() }).strict(),
+  z.object({ type: z.literal('midi') }).strict(),
   z.object({ type: z.literal('disconnect') }).strict(),
   z.object({ type: z.literal('mode'), mode: modeSchema }).strict(),
   z.object({ type: z.literal('decision'), decision: decisionSchema }).strict(),
@@ -215,7 +233,7 @@ export type Wire = z.infer<typeof wireSchema>;
 export const ipcInputs = {
   snapshot: emptySchema,
   discover: emptySchema,
-  connect: emptySchema,
+  connect: z.object({ adapter: adapterIdSchema.optional() }).strict(),
   disconnect: emptySchema,
   restart: emptySchema,
   setMode: z.object({ mode: modeSchema }).strict(),
