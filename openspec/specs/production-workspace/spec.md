@@ -55,3 +55,68 @@ The workspace SHALL include a developer console with correlated structured diagn
 
 - **WHEN** the runtime crashes
 - **THEN** the workspace displays the error, disables writes, preserves saved history, and offers restart without claiming a connected DAW
+
+### Requirement: Bridge connection setup
+
+Connection setup SHALL let the user choose the Cubase bridge, SHALL list detected MIDI ports, and SHALL report handshake progress, the connected Cubase version, and failure reasons. When no MIDI backend is available the bridge option SHALL be shown as unavailable with the reason, and SHALL not appear connectable.
+
+#### Scenario: No MIDI backend
+
+- **WHEN** the platform has no MIDI backend available
+- **THEN** the bridge option is presented as unavailable with the reason, and the mock remains selectable
+
+#### Scenario: Handshake succeeds
+
+- **WHEN** the bridge handshake completes
+- **THEN** the interface shows the connected Cubase version and a live, non-mock session indicator
+
+#### Scenario: Bridge lost mid-session
+
+- **WHEN** the bridge disconnects while the workspace is open
+- **THEN** writes are disabled, pending approvals are invalidated, history is preserved, and reconnection is an explicit action
+
+### Requirement: Creative partner selection
+
+Connection setup SHALL let the user choose Demo, Claude Code, or Codex, SHALL show installed, authenticated, and connected states per provider, SHALL offer verification, and SHALL explain why an unusable provider cannot be selected.
+
+#### Scenario: Unauthenticated provider
+
+- **WHEN** a discovered CLI is not signed in
+- **THEN** it is shown as installed but not connectable, with the reason and the command that signs in
+
+#### Scenario: Network disclosure before connecting
+
+- **WHEN** a live provider is selected
+- **THEN** the interface states that conversation content is sent to a model provider before the session is connected, and Demo remains the default
+
+### Requirement: Live agent failure is recoverable
+
+When a live agent session fails, the interface SHALL surface the reason, preserve history, keep the DAW session untouched, and require an explicit retry.
+
+#### Scenario: Agent crashes mid-conversation
+
+- **WHEN** the live CLI exits unexpectedly
+- **THEN** the failure and its reason are shown, prior messages remain, and no automatic retry occurs
+
+### Requirement: Sample library management
+
+The interface SHALL let the producer add and remove sample folders, and SHALL show each root's path, sample count, last index time, indexing progress, and any per-root failure without blocking use of the rest of the library.
+
+#### Scenario: Indexing a large folder
+
+- **WHEN** a large folder is being indexed
+- **THEN** progress is visible and the interface stays usable
+
+#### Scenario: One root fails
+
+- **WHEN** one root cannot be read
+- **THEN** its failure is shown and other roots remain searchable
+
+### Requirement: Sample search and preview
+
+The workspace SHALL let the producer search indexed samples and preview a result, with distinct empty-result and no-library-added states.
+
+#### Scenario: Preview a result
+
+- **WHEN** the producer previews a search result
+- **THEN** the audio plays from the local file without being copied or uploaded

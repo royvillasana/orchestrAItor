@@ -1,6 +1,6 @@
 ## MODIFIED Requirements
 
-### Requirement: Local storage with migrations
+### Requirement: Durable local storage
 
 Local storage SHALL apply schema migrations transactionally, upgrading an existing version 1 database to version 2 without losing conversations, messages, tool calls, or transactions. A database at an unsupported future version SHALL be preserved and reported rather than modified.
 
@@ -14,7 +14,7 @@ Local storage SHALL apply schema migrations transactionally, upgrading an existi
 - **WHEN** the upgrade fails partway
 - **THEN** it rolls back and the database is left at its previous version
 
-### Requirement: Confined application protocols
+### Requirement: Offline exported Next.js renderer
 
 Every custom protocol SHALL resolve paths before serving, reject traversal and symlink escapes, and serve only from its permitted source: the exported renderer for application assets, and the sample index for sample media.
 

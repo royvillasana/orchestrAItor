@@ -1,6 +1,6 @@
 ## MODIFIED Requirements
 
-### Requirement: Accurate connection states
+### Requirement: Installation is distinct from connection
 
 Discovery SHALL report only what exists on disk without executing candidates. Installed, authenticated, and connected SHALL be distinct states, and authentication SHALL be established only by explicit verification.
 

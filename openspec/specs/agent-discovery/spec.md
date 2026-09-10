@@ -27,12 +27,17 @@ The discovery service SHALL search PATH and platform-specific common installatio
 
 ### Requirement: Installation is distinct from connection
 
-The system SHALL distinguish discovery from session connection and authentication. An installed CLI MUST NOT be marked Connected without an established session.
+Discovery SHALL report only what exists on disk without executing candidates. Installed, authenticated, and connected SHALL be distinct states, and authentication SHALL be established only by explicit verification.
 
-#### Scenario: Installed Claude in skeleton
+#### Scenario: Installed but never verified
 
-- **WHEN** Claude Code is detected
-- **THEN** the interface shows Detected with authentication unverified and live sessions unavailable in this milestone
+- **WHEN** a CLI is discovered and not yet verified
+- **THEN** it is reported as installed with authentication unverified, and is not presented as connected
+
+#### Scenario: Verified and connected
+
+- **WHEN** a verified provider is connected as the creative partner
+- **THEN** the interface distinguishes it from both an unverified installation and the Demo provider
 
 ### Requirement: Model-independent provider contract
 

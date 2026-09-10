@@ -17,17 +17,12 @@ The application SHALL use a strict TypeScript monorepo with a Next.js App Router
 
 ### Requirement: Offline exported Next.js renderer
 
-Production SHALL bundle the Next.js static export and load it through a secure application protocol without a Next.js runtime server or internet access. Desktop data access SHALL use typed preload IPC from mounted client components. Prerendering MUST NOT require desktop APIs or access user data.
+Every custom protocol SHALL resolve paths before serving, reject traversal and symlink escapes, and serve only from its permitted source: the exported renderer for application assets, and the sample index for sample media.
 
-#### Scenario: Built application offline
+#### Scenario: Sample protocol asked for an application file
 
-- **WHEN** the production application launches offline and the user navigates between setup and the workspace and reloads
-- **THEN** exported pages, hydration scripts, Tailwind styles, and local assets load successfully under production CSP without a web server
-
-#### Scenario: Protocol path escape
-
-- **WHEN** a resource request attempts to resolve outside the bundled export directory
-- **THEN** the protocol handler rejects it without reading the external file
+- **WHEN** the sample protocol is asked for a path that is not an indexed sample
+- **THEN** it refuses
 
 ### Requirement: Secure validated IPC
 
@@ -45,17 +40,17 @@ The renderer MUST run with context isolation and sandbox enabled and Node integr
 
 ### Requirement: Durable local storage
 
-The application SHALL initialize SQLite in OS application data using transactional versioned migrations and persist settings, conversations, messages, tool calls, and transactions. Database work SHALL run outside the renderer and main UI thread. Credentials MUST NOT be stored in database/config/log plaintext.
+Local storage SHALL apply schema migrations transactionally, upgrading an existing version 1 database to version 2 without losing conversations, messages, tool calls, or transactions. A database at an unsupported future version SHALL be preserved and reported rather than modified.
 
-#### Scenario: Repeated startup
+#### Scenario: Upgrading an existing library
 
-- **WHEN** the application restarts after saving a conversation
-- **THEN** its history remains available and already-applied migrations are not repeated
+- **WHEN** an application holding schema 1 data starts with schema 2 support
+- **THEN** the new tables are added in a transaction and prior history remains readable
 
-#### Scenario: Migration failure
+#### Scenario: Failed upgrade
 
-- **WHEN** a migration fails
-- **THEN** the migration transaction rolls back, existing data is preserved, and the application shows a recovery error without dispatching tools
+- **WHEN** the upgrade fails partway
+- **THEN** it rolls back and the database is left at its previous version
 
 ### Requirement: Recoverable process lifecycle
 

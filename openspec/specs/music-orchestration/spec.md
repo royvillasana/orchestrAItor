@@ -8,31 +8,26 @@ TBD - created by archiving change setup-orchestrai-desktop. Update Purpose after
 
 ### Requirement: Capability-filtered validated music tools
 
-The registry SHALL define typed runtime-validated inputs/outputs and risk metadata for project.get_state, project.get_tempo, project.set_tempo, transport.play, and transport.stop. It SHALL advertise only tools allowed by current adapter capabilities and session mode and recheck these before execution.
+The tool registry SHALL expose tools filtered by the current mode and by the capabilities reported by the connected adapter, and SHALL additionally expose local read-only sample tools that do not depend on a DAW connection. Capability SHALL be revalidated immediately before execution, after any approval.
 
-#### Scenario: Unsupported or stale tool
+#### Scenario: Sample search without a DAW session
 
-- **WHEN** a caller requests an unregistered tool or a previously available tool after disconnect
-- **THEN** the orchestrator returns a structured error without adapter execution
+- **WHEN** no DAW adapter is connected
+- **THEN** sample search remains available and DAW tools do not
 
-#### Scenario: Invalid tempo
+#### Scenario: Capability lost between approval and execution
 
-- **WHEN** a tempo request is non-finite, not numeric, or outside the mock range of 20 through 300 BPM
-- **THEN** schema validation rejects it before adapter execution
+- **WHEN** an approved write is executed after the connected adapter stops reporting that capability
+- **THEN** execution is refused and the outcome is recorded as failed
 
 ### Requirement: One permission enforcement path
 
-All agent, desktop, and MCP music operations MUST pass through the same orchestrator permission engine. Ask SHALL permit reads and reject writes. Assist SHALL execute reads immediately and require explicit user approval for each write. Destructive requests SHALL always require approval if registered later.
+Every tool invocation SHALL record the agent session that made it, whether it originated locally or from an external agent process, and SHALL pass through the same validation, capability and mode filtering, permission engine, transaction record, and Undo eligibility.
 
-#### Scenario: Ask mode write attempt
+#### Scenario: Mixed origins in one conversation
 
-- **WHEN** a caller invokes project.set_tempo in Ask
-- **THEN** the operation is denied and project state remains unchanged
-
-#### Scenario: Assist approval
-
-- **WHEN** a user approves an Assist tempo request
-- **THEN** exactly the displayed tool and immutable arguments execute once and update visible state
+- **WHEN** a conversation contains calls from the Demo provider and from a live agent
+- **THEN** each activity records its originating session and both required approval for writes
 
 ### Requirement: Bound approval lifecycle
 

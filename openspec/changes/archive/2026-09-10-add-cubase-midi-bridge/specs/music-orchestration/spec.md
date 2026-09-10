@@ -1,6 +1,6 @@
 ## MODIFIED Requirements
 
-### Requirement: Capability and mode filtered tool exposure
+### Requirement: Capability-filtered validated music tools
 
 The tool registry SHALL expose tools filtered by the current mode and by the capabilities reported by the connected adapter, including capabilities obtained from a live handshake. Capability SHALL be revalidated immediately before execution, after any approval.
 
