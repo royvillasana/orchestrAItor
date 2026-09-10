@@ -100,6 +100,9 @@ export function Studio({ setup = false }: { setup?: boolean }) {
   const [consoleOpen, setConsoleOpen] = useState(false);
   const [adapter, setAdapter] = useState<AdapterId>('mock');
   const [partner, setPartner] = useState<ProviderId>('demo');
+  const [sampleQuery, setSampleQuery] = useState('');
+  const [preview, setPreview] = useState<string | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
   const end = useRef<HTMLDivElement>(null);
   const mounted = useRef(true);
   useEffect(() => {
@@ -222,6 +225,7 @@ export function Studio({ setup = false }: { setup?: boolean }) {
   ];
   const partnerBlocked =
     partnerOptions.find((option) => option.id === partner)?.unavailable ?? null;
+  const library = data?.library ?? { roots: [], total: 0 };
   const bridgeUnavailable = data?.midi
     ? data.midi.available
       ? null
@@ -462,15 +466,61 @@ export function Studio({ setup = false }: { setup?: boolean }) {
               </p>
             </section>
           </div>
-          <div className="flex shrink-0 items-center gap-4 rounded-xl border border-dashed border-line px-5 py-4 tall:px-6 tall:py-5">
-            <Icon kind="folder" className="shrink-0 text-muted" />
-            <div className="min-w-0">
-              <h2 className="text-sm">Your sample libraries</h2>
-              <p className="mt-1 text-xs text-muted">
-                Local indexing and sample search are planned for Milestone 03.
-              </p>
+          <div className="shrink-0 rounded-xl border border-dashed border-line px-5 py-4 tall:px-6 tall:py-5">
+            <div className="flex items-center gap-4">
+              <Icon kind="folder" className="shrink-0 text-muted" />
+              <div className="min-w-0">
+                <h2 className="text-sm">Your sample libraries</h2>
+                <p className="mt-1 truncate text-xs text-muted">
+                  {data?.indexing ??
+                    (library.roots.length === 0
+                      ? 'Add a folder to search your own sounds. Nothing is copied or uploaded.'
+                      : `${library.total} samples indexed from ${library.roots.length} folder${library.roots.length === 1 ? '' : 's'}.`)}
+                </p>
+              </div>
+              <div className="ml-auto flex shrink-0 items-center gap-2">
+                {library.roots.length > 0 && (
+                  <button
+                    onClick={() => void run((api) => api.reindexSamples({}))}
+                    disabled={busy || !desktop || !!data?.indexing}
+                    className={smallButton}
+                  >
+                    Re-index
+                  </button>
+                )}
+                <button
+                  onClick={() => void run((api) => api.addSampleFolder({}))}
+                  disabled={busy || !desktop || !!data?.indexing}
+                  className={smallButton}
+                >
+                  Add folder
+                </button>
+              </div>
             </div>
-            <span className="ml-auto shrink-0 text-xs text-muted">Coming later</span>
+            {library.roots.length > 0 && (
+              <ul className="mt-3 space-y-1 border-t border-line/60 pt-3">
+                {library.roots.map((root) => (
+                  <li key={root.path} className="flex items-center gap-3 text-[11px] text-muted">
+                    <span className="truncate" title={root.path}>
+                      {root.path}
+                    </span>
+                    <span className="ml-auto shrink-0">
+                      {root.error
+                        ? `Failed: ${root.error}`
+                        : `${root.count} samples${root.truncated ? ' · truncated at cap' : ''}`}
+                    </span>
+                    <button
+                      onClick={() => void run((api) => api.removeSampleFolder({ path: root.path }))}
+                      disabled={busy || !!data?.indexing}
+                      aria-label={`Remove ${root.path}`}
+                      className="shrink-0 rounded px-1.5 text-muted hover:text-paper disabled:opacity-40"
+                    >
+                      ✕
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
           <div className="flex shrink-0 items-center justify-between gap-6 tall:mt-3">
             <p className="flex items-center gap-2 text-xs text-muted">
@@ -590,12 +640,83 @@ export function Studio({ setup = false }: { setup?: boolean }) {
               ))}
             </div>
           </div>
-          <div className="border-t border-line px-5 py-5">
+          <div className="flex min-h-0 shrink-0 flex-col border-t border-line px-5 py-5">
             <div className="flex items-center gap-2 text-xs text-muted">
               <Icon kind="folder" />
               Sample libraries
+              <span className="ml-auto text-[10px] text-muted/60">{library.total}</span>
             </div>
-            <p className="mt-2 text-[10px] text-muted/60">Available in a later milestone</p>
+            {library.roots.length === 0 ? (
+              <p className="mt-2 text-[10px] leading-4 text-muted/60">
+                No folder added yet. Add one in{' '}
+                <Link href="/" className="underline">
+                  connection settings
+                </Link>
+                .
+              </p>
+            ) : (
+              <>
+                <form
+                  className="mt-3"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void run((api) => api.searchSamples({ query: sampleQuery }));
+                  }}
+                >
+                  <label htmlFor="sample-search" className="sr-only">
+                    Search samples
+                  </label>
+                  <input
+                    id="sample-search"
+                    value={sampleQuery}
+                    onChange={(event) => setSampleQuery(event.target.value)}
+                    placeholder="Search samples"
+                    maxLength={120}
+                    className="w-full rounded-lg border border-line bg-panel px-2.5 py-1.5 text-[11px] placeholder:text-muted/60"
+                  />
+                </form>
+                <ul className="mt-2 max-h-40 space-y-1 overflow-y-auto">
+                  {(data?.samples ?? []).map((sample) => (
+                    <li key={sample.id}>
+                      <button
+                        onClick={() => setPreview(sample.path)}
+                        title={sample.path}
+                        className={`w-full truncate rounded px-1.5 py-1 text-left text-[11px] transition hover:bg-raised ${
+                          preview === sample.path ? 'text-accent' : 'text-muted'
+                        }`}
+                      >
+                        {sample.name}
+                        {sample.durationMs !== null && (
+                          <span className="ml-1 text-muted/60">
+                            {(sample.durationMs / 1000).toFixed(1)}s
+                          </span>
+                        )}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+                {sampleQuery && (data?.samples ?? []).length === 0 && (
+                  <p className="mt-2 text-[10px] text-muted/60">
+                    No sample matched. Searches run against the local index only.
+                  </p>
+                )}
+                {preview && (
+                  <audio
+                    key={preview}
+                    controls
+                    // Served only for indexed files, through the confined protocol.
+                    src={`orchestra-sample://local${encodeURI(preview)}`}
+                    onError={() => setPreviewError(preview)}
+                    className="mt-2 h-8 w-full"
+                  />
+                )}
+                {previewError === preview && preview && (
+                  <p className="mt-1 text-[10px] text-warm">
+                    This format cannot be previewed here. The file is untouched on disk.
+                  </p>
+                )}
+              </>
+            )}
           </div>
         </aside>
         <section className="flex min-h-0 flex-col">

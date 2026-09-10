@@ -21,7 +21,10 @@ describe('real MCP/runtime process', () => {
     });
     cleanup.push(() => client.close());
     await client.connect(transport);
-    expect((await client.listTools()).tools).toEqual([]);
+    // Sample tools answer from the local index, so they survive a disconnected
+    // DAW; every tool that needs the DAW does not.
+    const tools = (await client.listTools()).tools.map((tool) => tool.name);
+    expect(tools.filter((name) => !name.startsWith('samples.'))).toEqual([]);
     const result = await client.callTool({ name: 'transport.play', arguments: {} });
     expect(result.isError).toBe(true);
   });

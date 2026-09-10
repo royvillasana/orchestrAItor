@@ -171,6 +171,33 @@ describe('live provider', () => {
     expect(prompt).toContain('mcp__orchestrai__project.set_tempo');
     expect(prompt).toMatch(/never claim a change was applied/i);
   });
+  it('asks the latest question, not the one the conversation was named after', () => {
+    const message = (id: string, role: 'user' | 'assistant', content: string) => ({
+      id,
+      conversationId: 'c',
+      role,
+      content,
+      provider: role === 'user' ? 'You' : 'Claude Code',
+      timestamp: '',
+    });
+    const prompt = buildPrompt(
+      {
+        id: 'c',
+        title: 'What tempo is this project',
+        timestamp: '',
+        messages: [
+          message('m1', 'user', 'What tempo is this project'),
+          message('m2', 'assistant', 'It is at 126 BPM.'),
+          message('m3', 'user', 'Find me a kick sample'),
+        ],
+      },
+      [{ name: 'samples.search', description: '', inputSchema: {} }],
+    );
+    expect(prompt).toMatch(/Request: Find me a kick sample/);
+    // Earlier turns stay as context rather than becoming the request.
+    expect(prompt).toContain('It is at 126 BPM.');
+    expect(prompt).not.toMatch(/Request: What tempo/);
+  });
 
   const stubProvider = async (script: string, id: 'claude' | 'codex' = 'claude') => {
     const directory = await mkdtemp(path.join(tmpdir(), 'orchestrai-stub-'));

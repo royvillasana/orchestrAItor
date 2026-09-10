@@ -13,6 +13,7 @@ import path from 'node:path';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { startCubasePeer } from './cubase-peer.mjs';
+import { until } from './until.mjs';
 
 const require_ = createRequire(import.meta.url);
 try {
@@ -48,13 +49,11 @@ try {
   });
   await page.getByRole('heading', { name: 'Your next idea starts here.' }).waitFor();
   await page.getByRole('button', { name: /Refresh detection/ }).click();
-  await page.waitForFunction(
-    async () =>
-      !!(await window.orchestra.snapshot({})).midi?.ports?.some((port) =>
-        port.name.includes('OrchestrAI Bridge'),
-      ),
-    null,
-    { timeout: 15000 },
+  await until(
+    page,
+    async () => (await window.orchestra.snapshot({})).midi?.ports ?? [],
+    (ports) => ports.some((port) => port.name.includes('OrchestrAI Bridge')),
+    { timeout: 15000, label: 'the bridge ports to be detected' },
   );
   const bridge = page.getByRole('radio', { name: /Cubase . Live bridge/ });
   assert.equal(await bridge.isDisabled(), false, 'The bridge must be selectable with a backend.');

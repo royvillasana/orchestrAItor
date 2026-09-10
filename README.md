@@ -147,13 +147,32 @@ A live provider **sends the conversation and project state to its model provider
 
 Codex is implemented against the same contract. Its happy path is **unverified here**: the account reached its usage limit during testing, which surfaced as a typed failure naming the CLI's own reason.
 
+## Sample libraries
+
+Add a folder in the connection screen and OrchestrAI indexes it locally. Nothing is copied, moved, or uploaded: the index records paths, sizes, modification times, tags derived from folder and file names, and the format facts readable from a header.
+
+```sh
+pnpm test:smoke-samples <folder>   # index, search, and preview a real folder
+```
+
+- **Bounded**: each root is walked to a depth of 12 and a cap of 50,000 files, hidden directories skipped, and a symlink may not carry indexing outside the chosen folder. Hitting the cap is reported as `truncated`, not silently swallowed.
+- **Header facts, not decoding**: WAV and AIFF give sample rate, channels, bit depth, and duration from their headers. Other formats are indexed by name, size, and tags with those facts recorded as **unknown** — an invented duration is worse than an absent one.
+- **Incremental**: re-indexing skips files whose path, size, and modification time are unchanged, and reports added, updated, removed, and skipped counts.
+- **Derived tags**: tokens from the path, so anything under a folder called `808` is tagged `808`. That is name matching, not analysis; audio analysis remains a later capability.
+
+`samples.search` and `samples.stats` are registered as **read-only** tools available in Ask, and they do not need a DAW connection — so a live agent can find sounds with no session open, and neither tool can change anything.
+
+Preview plays through `orchestra-sample://`, a second protocol confined to the index: the resolved path of any request must be an indexed file, so a symlink cannot borrow an indexed name to reach something else, and a file the producer never indexed is refused whether or not it exists. The scheme supports media only — no fetch — and CSP admits it under `media-src` alone.
+
+**What leaves the machine**: audio never does. When a live partner is connected, search results it asks for — file names, folder names, and header facts — are sent to that model provider along with the rest of the conversation, which is what the connection screen already discloses.
+
 ## Local data and recovery
 
 Data lives in Electron's OS application-data directory under `OrchestrAI`:
 
 - macOS: `~/Library/Application Support/OrchestrAI/`
 - Windows: `%APPDATA%/OrchestrAI/`
-- `orchestrai.sqlite`: settings, conversations, messages, tool calls, transactions, and migration versions.
+- `orchestrai.sqlite`: settings, conversations, messages, tool calls, transactions, sample roots and index, and migration versions (schema 2).
 - `events.jsonl`: structured local diagnostics with secret patterns redacted.
 
 SQLite runs through `sql.js` in a worker, avoiding native Electron ABI rebuilds. Each mutation commits and writes an atomic checkpoint before acknowledging durability. This is appropriate for the skeleton's metadata; large sample catalogs will need a storage performance review before Milestone 3. One application instance owns the database. The database is local but not encrypted, so conversations should not contain API credentials. No API-key entry/storage is implemented yet; future credentials must use the OS credential store.
@@ -173,6 +192,7 @@ pnpm build
 pnpm test:smoke
 pnpm test:smoke-bridge
 pnpm test:smoke-agent
+pnpm test:smoke-samples <folder>
 pnpm audit --prod
 ```
 
@@ -184,4 +204,4 @@ For development-mode smoke verification, start `pnpm --filter @orchestrai/deskto
 
 ## Next milestones
 
-Sample folders, indexing, preview, and MIDI artifacts remain the next milestone. API credential storage, plugin operations, autonomous Agent mode, and token-level streaming into the transcript remain separate integrations. The active implementation checklist is `openspec/changes/add-cubase-midi-bridge/tasks.md`; Milestone 1 is archived under `openspec/changes/archive/`.
+MIDI artifact generation and audio analysis remain the next milestone. API credential storage, plugin operations, autonomous Agent mode, and token-level streaming into the transcript remain separate integrations. The active implementation checklist is `openspec/changes/add-cubase-midi-bridge/tasks.md`; Milestone 1 is archived under `openspec/changes/archive/`.

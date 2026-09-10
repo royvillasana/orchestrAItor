@@ -71,6 +71,9 @@ importers:
       '@orchestrai/mcp-server':
         specifier: workspace:*
         version: link:../../packages/mcp-server
+      '@orchestrai/sample-indexer':
+        specifier: workspace:*
+        version: link:../../packages/sample-indexer
       '@orchestrai/shared-types':
         specifier: workspace:*
         version: link:../../packages/shared-types
@@ -192,7 +195,11 @@ importers:
         specifier: 3.25.76
         version: 3.25.76
 
-  packages/sample-indexer: {}
+  packages/sample-indexer:
+    dependencies:
+      '@orchestrai/shared-types':
+        specifier: workspace:*
+        version: link:../shared-types
 
   packages/shared-types:
     dependencies:

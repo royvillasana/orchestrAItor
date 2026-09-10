@@ -11,9 +11,15 @@ import {
   appendFileSync,
 } from 'node:fs';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import {
   activitySchema,
   historySchema,
+  indexedSampleSchema,
+  sampleLibrarySchema,
+  sampleRootSchema,
+  type IndexedSample,
+  type SampleLibrary,
   storeCommandSchema,
   type StoreCommand,
   type LogEntry,
@@ -24,6 +30,9 @@ export function redact(text: string): string {
     .replace(/\b(sk-[\w-]+|Bearer\s+[\w.-]+)\b/gi, '[REDACTED]')
     .replace(/((?:api[_-]?key|token|password|secret)\s*[=:]\s*)[^\s,;]+/gi, '$1[REDACTED]');
 }
+/** Must match the indexer's derivation so removals and updates address the same row. */
+export const sampleId = (file: string) =>
+  createHash('sha1').update(file).digest('hex').slice(0, 24);
 export const migration = `
 CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY);
 CREATE TABLE settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -34,25 +43,48 @@ CREATE TABLE transactions(id TEXT PRIMARY KEY, json TEXT NOT NULL);
 INSERT INTO schema_migrations VALUES(1);
 INSERT INTO settings VALUES('mode', 'ask');
 `;
-export function migrate(db: Database, sql = migration) {
+/** Sample libraries. Applied on top of schema 1 so existing history survives. */
+export const migration002 = `
+CREATE TABLE sample_roots(path TEXT PRIMARY KEY, json TEXT NOT NULL);
+CREATE TABLE samples(id TEXT PRIMARY KEY, root TEXT NOT NULL, json TEXT NOT NULL);
+CREATE INDEX samples_root ON samples(root);
+INSERT INTO schema_migrations VALUES(2);
+`;
+export const SCHEMA_VERSION = 2;
+export function migrate(db: Database, sql = migration, upgrades = { 2: migration002 }) {
   const existing = db.exec("SELECT name FROM sqlite_master WHERE name='schema_migrations'");
-  if (existing.length) {
-    const version = Number(
-      db.exec('SELECT MAX(version) FROM schema_migrations')[0]?.values[0]?.[0],
+  const apply = (statements: string) => {
+    db.run('BEGIN');
+    try {
+      db.run(statements);
+      db.run('COMMIT');
+    } catch (error) {
+      db.run('ROLLBACK');
+      throw error;
+    }
+  };
+  if (!existing.length) {
+    apply(sql);
+    if (Number(db.exec('SELECT MAX(version) FROM schema_migrations')[0]?.values[0]?.[0]) === 1)
+      apply(upgrades[2]);
+    return;
+  }
+  let version = Number(db.exec('SELECT MAX(version) FROM schema_migrations')[0]?.values[0]?.[0]);
+  if (version > SCHEMA_VERSION)
+    throw new Error(
+      'Unsupported database schema; preserve this file and use a compatible application version.',
     );
-    if (version !== 1)
+  // Each step commits on its own, so a failure leaves the database at the last
+  // version that fully applied rather than half-upgraded.
+  while (version < SCHEMA_VERSION) {
+    const next = version + 1;
+    const statements = upgrades[next as keyof typeof upgrades];
+    if (!statements)
       throw new Error(
         'Unsupported database schema; preserve this file and use a compatible application version.',
       );
-    return;
-  }
-  db.run('BEGIN');
-  try {
-    db.run(sql);
-    db.run('COMMIT');
-  } catch (error) {
-    db.run('ROLLBACK');
-    throw error;
+    apply(statements);
+    version = next;
   }
 }
 export class LocalStore {
@@ -107,9 +139,58 @@ export class LocalStore {
       mode,
     });
   }
+  library(): SampleLibrary {
+    const roots = (
+      this.db.exec('SELECT json FROM sample_roots ORDER BY rowid')[0]?.values ?? []
+    ).map((row) => sampleRootSchema.parse(JSON.parse(String(row[0]))));
+    const total = Number(this.db.exec('SELECT COUNT(*) FROM samples')[0]?.values[0]?.[0] ?? 0);
+    return sampleLibrarySchema.parse({ roots, total });
+  }
+  /**
+   * Ranked by where the query matches: an exact name beats a name prefix, which
+   * beats a tag, which beats anything else in the path. Shorter names win ties,
+   * because "kick.wav" is a better answer than "kick_layer_processed_v3.wav".
+   */
+  searchSamples(query: string, limit: number): IndexedSample[] {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return [];
+    const terms = needle.split(/\s+/).filter(Boolean);
+    const scored: { sample: IndexedSample; score: number }[] = [];
+    for (const row of this.db.exec('SELECT json FROM samples')[0]?.values ?? []) {
+      const sample = indexedSampleSchema.parse(JSON.parse(String(row[0])));
+      const name = sample.name.toLowerCase();
+      const haystack = `${sample.path.toLowerCase()} ${sample.tags.join(' ')}`;
+      if (!terms.every((term) => haystack.includes(term))) continue;
+      let score = 0;
+      if (name === needle || name.replace(/\.[^.]+$/, '') === needle) score += 100;
+      if (name.startsWith(needle)) score += 40;
+      if (name.includes(needle)) score += 20;
+      if (terms.every((term) => sample.tags.includes(term))) score += 15;
+      score += Math.max(0, 20 - Math.floor(sample.name.length / 4));
+      scored.push({ sample, score });
+    }
+    return scored
+      .sort((a, b) => b.score - a.score || a.sample.name.localeCompare(b.sample.name))
+      .slice(0, limit)
+      .map((entry) => entry.sample);
+  }
+  sampleByPath(file: string): IndexedSample | null {
+    for (const row of this.db.exec('SELECT json FROM samples')[0]?.values ?? []) {
+      const sample = indexedSampleSchema.parse(JSON.parse(String(row[0])));
+      if (sample.path === file) return sample;
+    }
+    return null;
+  }
   execute(raw: StoreCommand): unknown {
     const command = storeCommandSchema.parse(raw);
     if (command.type === 'history') return this.history();
+    if (command.type === 'library') return this.library();
+    if (command.type === 'searchSamples') return this.searchSamples(command.query, command.limit);
+    if (command.type === 'sampleByPath') return this.sampleByPath(command.path);
+    if (command.type === 'samplesForRoot')
+      return (
+        this.db.exec('SELECT json FROM samples WHERE root=?', [command.root])[0]?.values ?? []
+      ).map((row) => indexedSampleSchema.parse(JSON.parse(String(row[0]))));
     if (command.type === 'log') {
       this.log(command.log);
       return null;
@@ -131,6 +212,54 @@ export class LocalStore {
       }
       if (command.type === 'mode')
         this.db.run("UPDATE settings SET value=? WHERE key='mode'", [command.mode]);
+      if (command.type === 'addRoot')
+        this.db.run(
+          'INSERT INTO sample_roots(path,json) VALUES(?,?) ON CONFLICT(path) DO NOTHING',
+          [
+            command.path,
+            JSON.stringify({
+              path: command.path,
+              count: 0,
+              indexedAt: null,
+              truncated: false,
+              error: null,
+            }),
+          ],
+        );
+      if (command.type === 'removeRoot') {
+        this.db.run('DELETE FROM samples WHERE root=?', [command.path]);
+        this.db.run('DELETE FROM sample_roots WHERE path=?', [command.path]);
+      }
+      if (command.type === 'indexed') {
+        const report = command.report;
+        // Ids are derived from the absolute path, so a removal is exact rather
+        // than a pattern match against stored JSON.
+        for (const file of report.removed)
+          this.db.run('DELETE FROM samples WHERE id=? AND root=?', [sampleId(file), report.root]);
+        // samples carries its own root column, so it needs its own upsert.
+        for (const sample of report.samples)
+          this.db.run(
+            'INSERT INTO samples(id,root,json) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET root=excluded.root, json=excluded.json',
+            [sample.id, report.root, JSON.stringify(sample)],
+          );
+        const count = Number(
+          this.db.exec('SELECT COUNT(*) FROM samples WHERE root=?', [report.root])[0]
+            ?.values[0]?.[0] ?? 0,
+        );
+        this.db.run(
+          'INSERT INTO sample_roots(path,json) VALUES(?,?) ON CONFLICT(path) DO UPDATE SET json=excluded.json',
+          [
+            report.root,
+            JSON.stringify({
+              path: report.root,
+              count,
+              indexedAt: report.indexedAt,
+              truncated: report.truncated,
+              error: report.errors[0] ?? null,
+            }),
+          ],
+        );
+      }
       if (command.type === 'interrupt')
         for (const raw of this.rows('tool_calls')) {
           const call = activitySchema.parse(raw);

@@ -249,16 +249,35 @@ export class LiveAgentProvider implements AgentProvider {
     });
   }
 }
+export const PROMPT_HISTORY_TURNS = 10;
 export function buildPrompt(conversation: Conversation, tools: ToolDefinition[]): string {
   const names = tools.map((tool) => `mcp__${MCP_SERVER_NAME}__${tool.name}`).join(', ');
+  // The conversation's own messages are the request. The title is only what the
+  // first message was called, so building from it answers the wrong question on
+  // every turn after the first.
+  const messages = conversation.messages ?? [];
+  const recent = messages.slice(-PROMPT_HISTORY_TURNS);
+  const latest = [...messages].reverse().find((message) => message.role === 'user');
+  const earlier = recent.filter((message) => message !== latest);
   return [
     'You are the music assistant inside OrchestrAI, a local-first production workspace.',
     names
       ? `Use only these tools to inspect or change the session: ${names}.`
       : 'No session tools are available right now; say so rather than guessing.',
     'Writes require the producer to approve them in the app. If a tool reports that it is awaiting approval, say so plainly and stop; never claim a change was applied.',
+    'When asked about sounds, search the local sample library rather than guessing file names, and cite the paths the search returns.',
     'Answer briefly and concretely for a musician, not a developer.',
+    ...(earlier.length
+      ? [
+          '',
+          'Earlier in this conversation:',
+          ...earlier.map(
+            (message) =>
+              `${message.role === 'user' ? 'Producer' : 'You'}: ${message.content.slice(0, 1000)}`,
+          ),
+        ]
+      : []),
     '',
-    `Request: ${conversation.title}`,
+    `Request: ${latest?.content ?? conversation.title}`,
   ].join('\n');
 }

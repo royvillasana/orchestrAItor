@@ -20,6 +20,51 @@ export const midiStatusSchema = z
   })
   .strict();
 export type MidiStatus = z.infer<typeof midiStatusSchema>;
+export const indexedSampleSchema = z
+  .object({
+    id: idSchema,
+    root: z.string().max(1000),
+    path: z.string().max(1000),
+    name: z.string().max(300),
+    extension: z.string().max(10),
+    size: z.number().int().nonnegative(),
+    modifiedMs: z.number().int().nonnegative(),
+    tags: z.array(z.string().max(24)).max(24),
+    sampleRate: z.number().int().positive().nullable(),
+    channels: z.number().int().positive().nullable(),
+    bitDepth: z.number().int().positive().nullable(),
+    durationMs: z.number().int().nonnegative().nullable(),
+  })
+  .strict();
+export type IndexedSample = z.infer<typeof indexedSampleSchema>;
+export const indexReportSchema = z
+  .object({
+    root: z.string().max(1000),
+    samples: z.array(indexedSampleSchema),
+    added: z.number().int().nonnegative(),
+    updated: z.number().int().nonnegative(),
+    removed: z.array(z.string().max(1000)),
+    skipped: z.number().int().nonnegative(),
+    truncated: z.boolean(),
+    errors: z.array(z.string().max(500)),
+    indexedAt: z.string(),
+  })
+  .strict();
+export type IndexReport = z.infer<typeof indexReportSchema>;
+export const sampleRootSchema = z
+  .object({
+    path: z.string().max(1000),
+    count: z.number().int().nonnegative(),
+    indexedAt: z.string().nullable(),
+    truncated: z.boolean(),
+    error: z.string().max(500).nullable(),
+  })
+  .strict();
+export type SampleRoot = z.infer<typeof sampleRootSchema>;
+export const sampleLibrarySchema = z
+  .object({ roots: z.array(sampleRootSchema), total: z.number().int().nonnegative() })
+  .strict();
+export type SampleLibrary = z.infer<typeof sampleLibrarySchema>;
 export const capabilitySchema = z
   .object({
     id: idSchema,
@@ -59,7 +104,13 @@ export const toolNames = [
   'project.set_tempo',
   'transport.play',
   'transport.stop',
+  'samples.search',
+  'samples.stats',
 ] as const;
+/** Local tools that answer from the sample index rather than from a DAW. */
+export const localToolNames = ['samples.search', 'samples.stats'] as const;
+export const isLocalTool = (name: string): name is (typeof localToolNames)[number] =>
+  (localToolNames as readonly string[]).includes(name);
 export const toolNameSchema = z.enum(toolNames);
 export type ToolName = z.infer<typeof toolNameSchema>;
 export const emptySchema = z.object({}).strict();
@@ -76,6 +127,13 @@ export const toolSchemas = {
   'project.set_tempo': z.object({ tempo: tempoSchema }).strict(),
   'transport.play': emptySchema,
   'transport.stop': emptySchema,
+  'samples.search': z
+    .object({
+      query: z.string().trim().min(1).max(120),
+      limit: z.number().int().min(1).max(50).optional(),
+    })
+    .strict(),
+  'samples.stats': emptySchema,
 };
 export const commandSchema = z
   .object({ tool: toolNameSchema, arguments: argumentsSchema })
@@ -188,6 +246,9 @@ export const snapshotSchema = z
   .object({
     runtime: runtimeStateSchema.nullable(),
     midi: midiStatusSchema.nullable(),
+    library: sampleLibrarySchema,
+    indexing: z.string().max(300).nullable(),
+    samples: z.array(indexedSampleSchema).max(50),
     agents: z.array(agentSchema),
     history: historySchema,
     logs: z.array(logSchema),
@@ -231,6 +292,19 @@ export const storeCommandSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('mode'), mode: modeSchema }).strict(),
   z.object({ type: z.literal('interrupt') }).strict(),
   z.object({ type: z.literal('log'), log: logSchema }).strict(),
+  z.object({ type: z.literal('library') }).strict(),
+  z.object({ type: z.literal('addRoot'), path: z.string().min(1).max(1000) }).strict(),
+  z.object({ type: z.literal('removeRoot'), path: z.string().min(1).max(1000) }).strict(),
+  z.object({ type: z.literal('indexed'), report: indexReportSchema }).strict(),
+  z
+    .object({
+      type: z.literal('searchSamples'),
+      query: z.string().max(120),
+      limit: z.number().int().min(1).max(50),
+    })
+    .strict(),
+  z.object({ type: z.literal('sampleByPath'), path: z.string().max(1000) }).strict(),
+  z.object({ type: z.literal('samplesForRoot'), root: z.string().max(1000) }).strict(),
 ]);
 export type StoreCommand = z.infer<typeof storeCommandSchema>;
 export const wireSchema = z.discriminatedUnion('kind', [
@@ -253,6 +327,12 @@ export const ipcInputs = {
     .object({ adapter: adapterIdSchema.optional(), provider: providerIdSchema.optional() })
     .strict(),
   verify: z.object({ agent: providerIdSchema }).strict(),
+  addSampleFolder: emptySchema,
+  removeSampleFolder: z.object({ path: z.string().min(1).max(1000) }).strict(),
+  reindexSamples: emptySchema,
+  searchSamples: z
+    .object({ query: z.string().max(120), limit: z.number().int().min(1).max(50).optional() })
+    .strict(),
   disconnect: emptySchema,
   restart: emptySchema,
   setMode: z.object({ mode: modeSchema }).strict(),

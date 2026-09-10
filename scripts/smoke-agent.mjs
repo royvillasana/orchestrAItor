@@ -13,6 +13,7 @@ import path from 'node:path';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { startCubasePeer } from './cubase-peer.mjs';
+import { until } from './until.mjs';
 
 const require_ = createRequire(import.meta.url);
 try {
@@ -32,13 +33,11 @@ try {
   const page = await app.firstWindow();
   await page.getByRole('heading', { name: 'Your next idea starts here.' }).waitFor();
   await page.getByRole('button', { name: /Refresh detection/ }).click();
-  await page.waitForFunction(
-    async () =>
-      !!(await window.orchestra.snapshot({})).midi?.ports?.some((port) =>
-        port.name.includes('OrchestrAI Bridge'),
-      ),
-    null,
-    { timeout: 15000 },
+  await until(
+    page,
+    async () => (await window.orchestra.snapshot({})).midi?.ports ?? [],
+    (ports) => ports.some((port) => port.name.includes('OrchestrAI Bridge')),
+    { timeout: 15000, label: 'the bridge ports to be detected' },
   );
   // Discovery must never claim authentication it has not checked.
   const discovered = await page.evaluate(async () => (await window.orchestra.snapshot({})).agents);
@@ -105,13 +104,11 @@ try {
   );
   // The agent's answer is persisted when its turn ends, which can be after the
   // approval prompt appears.
-  await page.waitForFunction(
-    async () =>
-      (await window.orchestra.snapshot({})).history.messages.some(
-        (message) => message.provider === 'Claude Code',
-      ),
-    null,
-    { timeout: 120000 },
+  await until(
+    page,
+    async () => (await window.orchestra.snapshot({})).history.messages,
+    (messages) => messages.some((message) => message.provider === 'Claude Code'),
+    { timeout: 120000, label: "the live agent's answer to be persisted" },
   );
   // The transcript must attribute the answer to the provider that produced it.
   const transcript = await page.locator('body').innerText();
@@ -119,6 +116,50 @@ try {
   assert.match(transcript, /Claude Code/);
   const call = [...peer.api.log].reverse().find((entry) => entry.call === 'setTempoBPM');
   assert.ok(call && call.bpm === 126, 'The approved write must reach the driver script.');
+  // The agent can reach the producer's own sounds through the same read path.
+  if (process.env.ORCHESTRA_SAMPLE_FOLDER) {
+    await app.evaluate(({ dialog }, folder) => {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [folder] });
+    }, process.env.ORCHESTRA_SAMPLE_FOLDER);
+    await page.evaluate(async () => await window.orchestra.addSampleFolder({}));
+    const library = await until(
+      page,
+      async () => (await window.orchestra.snapshot({})).library,
+      (value) => value.total > 0,
+      { timeout: 60000, label: 'the sample folder to index' },
+    );
+    console.log(`library: ${library.total} samples indexed`);
+    // Count what is already there: the tempo turn has answers of its own.
+    const before = (
+      await page.evaluate(async () => (await window.orchestra.snapshot({})).history.messages)
+    ).filter((message) => message.role === 'assistant').length;
+    await page.getByLabel(/^Message /).fill('Find me a kick sample and tell me its full path.');
+    await page.getByRole('button', { name: 'Send message', exact: true }).click();
+    const messages = await until(
+      page,
+      async () => (await window.orchestra.snapshot({})).history.messages,
+      (value) => value.filter((message) => message.role === 'assistant').length > before,
+      { timeout: 180000, label: "the agent's sample answer" },
+    );
+    const answer = messages.filter((message) => message.role === 'assistant').at(-1).content;
+    console.log(`agent said: ${answer.slice(0, 200).replace(/\n/g, ' ')}`);
+    // A cited path must be real, not invented.
+    assert.match(answer, /Kick/i, 'The agent must name a sample it actually found.');
+    assert.ok(
+      answer.includes(process.env.ORCHESTRA_SAMPLE_FOLDER) ||
+        answer.includes(path.basename(process.env.ORCHESTRA_SAMPLE_FOLDER)),
+      'The agent must cite the real indexed path.',
+    );
+    const searched = await page.evaluate(
+      async () => (await window.orchestra.snapshot({})).history.activities,
+    );
+    assert.ok(
+      searched.some(
+        (activity) => activity.tool === 'samples.search' && activity.agent === 'claude',
+      ),
+      'The agent must have used samples.search rather than guessing.',
+    );
+  }
   await page.screenshot({ path: 'artifacts/agent-live.png', fullPage: true });
   console.log(
     'PASS: verification, live partner selection, agent tool calls through the permission path, and an approved write reaching the session.',

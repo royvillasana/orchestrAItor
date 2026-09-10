@@ -3,7 +3,13 @@ import { mkdtemp, readFile, writeFile, mkdir, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
 import path from 'node:path';
-import { LocalStore, redact, migrate } from '../apps/desktop/electron/store';
+import {
+  LocalStore,
+  redact,
+  migrate,
+  migration,
+  SCHEMA_VERSION,
+} from '../apps/desktop/electron/store';
 import {
   trustedURL,
   trustedSender,
@@ -129,8 +135,39 @@ describe('SQLite persistence', () => {
     expect(() => migrate(db, 'CREATE TABLE marker(x); INVALID SQL;')).toThrow();
     expect(db.exec("SELECT name FROM sqlite_master WHERE name='marker'")).toEqual([]);
     migrate(db);
-    db.run('UPDATE schema_migrations SET version=2');
+    db.run(`INSERT INTO schema_migrations VALUES(${SCHEMA_VERSION + 1})`);
     expect(() => migrate(db)).toThrow('Unsupported');
+    db.close();
+  });
+  it('upgrades a version 1 database to 2 without losing history', async () => {
+    const init: typeof import('sql.js').default = require('sql.js');
+    const SQL = await init({ locateFile: () => wasm });
+    const db = new SQL.Database();
+    // A database created before sample libraries existed.
+    migrate(db, migration, {} as never);
+    expect(Number(db.exec('SELECT MAX(version) FROM schema_migrations')[0].values[0][0])).toBe(1);
+    db.run('INSERT INTO conversations VALUES(\'c1\', \'{"id":"c1"}\')');
+    db.run('INSERT INTO messages VALUES(\'m1\', \'{"id":"m1"}\')');
+
+    migrate(db);
+    expect(Number(db.exec('SELECT MAX(version) FROM schema_migrations')[0].values[0][0])).toBe(
+      SCHEMA_VERSION,
+    );
+    expect(db.exec('SELECT id FROM conversations')[0].values).toEqual([['c1']]);
+    expect(db.exec('SELECT id FROM messages')[0].values).toEqual([['m1']]);
+    expect(db.exec('SELECT COUNT(*) FROM samples')[0].values).toEqual([[0]]);
+    db.close();
+  });
+  it('leaves the database at its previous version when an upgrade fails', async () => {
+    const init: typeof import('sql.js').default = require('sql.js');
+    const SQL = await init({ locateFile: () => wasm });
+    const db = new SQL.Database();
+    migrate(db, migration, {} as never);
+    expect(() =>
+      migrate(db, migration, { 2: 'CREATE TABLE ok(x); INVALID SQL;' } as never),
+    ).toThrow();
+    expect(Number(db.exec('SELECT MAX(version) FROM schema_migrations')[0].values[0][0])).toBe(1);
+    expect(db.exec("SELECT name FROM sqlite_master WHERE name='ok'")).toEqual([]);
     db.close();
   });
 });

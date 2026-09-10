@@ -7,6 +7,7 @@ import {
   commandSchema,
   toolSchemas,
   toolNames,
+  isLocalTool,
   type Capability,
   type DawAdapter,
   type DawCommand,
@@ -38,7 +39,12 @@ export class MockCubaseAdapter implements DawAdapter {
     this.connected = false;
   }
   async getCapabilities(): Promise<Capability[]> {
-    return [...toolNames, 'track.create_audio', 'midi.insert_clip', 'plugin.insert'].map((id) => ({
+    return [
+      ...toolNames.filter((id) => !isLocalTool(id)),
+      'track.create_audio',
+      'midi.insert_clip',
+      'plugin.insert',
+    ].map((id) => ({
       id,
       support: this.connected && toolNames.some((n) => n === id) ? 'native' : 'unsupported',
       risk: id.includes('.get_') ? 'read' : 'safe-write',

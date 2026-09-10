@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { until } from './until.mjs';
 
 const dataDirectory = await mkdtemp(path.join(tmpdir(), 'orchestrai-smoke-'));
 await mkdir('artifacts', { recursive: true });
@@ -136,11 +137,11 @@ try {
   assert.ok(pending);
   process.kill(runtimePid(), 'SIGKILL');
   await page.getByRole('button', { name: 'Restart runtime', exact: true }).waitFor();
-  await page.waitForFunction(
-    async () =>
-      !(await window.orchestra.snapshot({})).history.activities.some(
-        (a) => a.status === 'awaiting-approval',
-      ),
+  await until(
+    page,
+    async () => (await window.orchestra.snapshot({})).history.activities,
+    (activities) => !activities.some((activity) => activity.status === 'awaiting-approval'),
+    { label: 'the crashed runtime to invalidate its pending approval' },
   );
   await page.getByRole('button', { name: 'Restart runtime', exact: true }).click();
   await page.getByRole('button', { name: 'Connect mock session', exact: true }).click();

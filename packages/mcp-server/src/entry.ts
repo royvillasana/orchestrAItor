@@ -12,8 +12,11 @@ import { DemoProvider } from '@orchestrai/agent-core';
 import { AgentToolChannel, LiveAgentProvider } from '@orchestrai/live-agents';
 import { discoverAgents, verifyAgent, isVerifiable } from '@orchestrai/cli';
 import { Orchestrator } from '@orchestrai/orchestrator';
+import { z } from 'zod';
 import {
   wireSchema,
+  sampleLibrarySchema,
+  indexedSampleSchema,
   historySchema,
   errorText,
   type StoreCommand,
@@ -48,6 +51,43 @@ function store(command: StoreCommand): Promise<unknown> {
 }
 const orchestration = new Orchestrator(new MockCubaseAdapter(), async (activity) => {
   await store({ type: 'activity', activity });
+});
+/**
+ * Sample search runs against the desktop's index over the existing persistence
+ * channel; the runtime keeps no library of its own.
+ */
+orchestration.useSamples({
+  search: async (query, limit) => {
+    const library = sampleLibrarySchema.parse(await store({ type: 'library' }));
+    if (library.roots.length === 0)
+      throw new Error('No sample folder has been added yet. Add one in the connection screen.');
+    const results = z
+      .array(indexedSampleSchema)
+      .parse(await store({ type: 'searchSamples', query, limit }));
+    if (results.length === 0)
+      return `No sample matched "${query}" in ${library.total} indexed samples.`;
+    return results
+      .map((sample) => {
+        const facts = [
+          sample.durationMs !== null ? `${(sample.durationMs / 1000).toFixed(2)}s` : null,
+          sample.sampleRate !== null ? `${sample.sampleRate} Hz` : null,
+          sample.channels === 1 ? 'mono' : sample.channels === 2 ? 'stereo' : null,
+        ].filter(Boolean);
+        return `${sample.name}${facts.length ? ` (${facts.join(', ')})` : ''} — ${sample.path}`;
+      })
+      .join('\n');
+  },
+  stats: async () => {
+    const library = sampleLibrarySchema.parse(await store({ type: 'library' }));
+    if (library.roots.length === 0) return 'No sample folder has been added yet.';
+    return [
+      `${library.total} samples indexed across ${library.roots.length} folder(s).`,
+      ...library.roots.map(
+        (root) =>
+          `${root.path}: ${root.count} samples${root.truncated ? ' (truncated at the index cap)' : ''}${root.indexedAt ? `, indexed ${root.indexedAt}` : ', not indexed yet'}`,
+      ),
+    ].join('\n');
+  },
 });
 const demo = new DemoProvider();
 let live: LiveAgentProvider | null = null;

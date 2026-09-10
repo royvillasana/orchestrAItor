@@ -2,6 +2,9 @@ import { randomUUID } from 'node:crypto';
 import {
   type AdapterId,
   type ProviderId,
+  type Capability,
+  localToolNames,
+  isLocalTool,
   activitySchema,
   errorText,
   resultSchema,
@@ -15,6 +18,10 @@ import {
   type ToolName,
 } from '@orchestrai/shared-types';
 
+export interface SampleTools {
+  search(query: string, limit: number): Promise<string>;
+  stats(): Promise<string>;
+}
 export class Orchestrator {
   readonly sessionId = randomUUID();
   private mode: Mode = 'ask';
@@ -22,6 +29,7 @@ export class Orchestrator {
   private queue: Promise<unknown> = Promise.resolve();
   private calls = new Map<string, Activity>();
   private adapterId: AdapterId = 'mock';
+  private samples: SampleTools | null = null;
   private provider: { id: ProviderId; label: string; live: boolean } = {
     id: 'demo',
     label: 'Demo agent',
@@ -72,13 +80,31 @@ export class Orchestrator {
       providerLive: this.provider.live,
     };
   }
-  async tools() {
-    return (await this.adapter.getCapabilities()).filter(
-      (c) =>
-        c.support !== 'unsupported' &&
-        (this.mode === 'assist' || c.risk === 'read') &&
-        toolNameSchema.safeParse(c.id).success,
+  /** Everything the session can do, before the mode filter. */
+  private async capabilities(): Promise<Capability[]> {
+    const adapterTools = (await this.adapter.getCapabilities()).filter(
+      (c) => !isLocalTool(c.id) && toolNameSchema.safeParse(c.id).success,
     );
+    // Sample tools answer from the local index, so they do not depend on a DAW
+    // session and are read-only in both modes.
+    const localTools: Capability[] = this.samples
+      ? localToolNames.map((id) => ({
+          id,
+          support: 'native' as const,
+          risk: 'read' as const,
+          requiresConfirmation: false,
+        }))
+      : [];
+    return [...adapterTools, ...localTools];
+  }
+  async tools() {
+    return (await this.capabilities()).filter(
+      (c) => c.support !== 'unsupported' && (this.mode === 'assist' || c.risk === 'read'),
+    );
+  }
+  /** Local, read-only sample search, injected so the orchestrator owns no storage. */
+  useSamples(samples: SampleTools | null) {
+    this.samples = samples;
   }
   private dawLabel() {
     const named = this.adapter as DawAdapter & { connectedDaw?: string | null };
@@ -147,8 +173,13 @@ export class Orchestrator {
     try {
       const name = toolNameSchema.parse(tool);
       const validated = toolSchemas[name].parse(args);
-      const capability = (await this.adapter.getCapabilities()).find((c) => c.id === tool);
-      if (!this.connected || !capability || capability.support === 'unsupported')
+      // Looked up unfiltered, so an Ask-mode write is explained rather than
+      // reported as a tool that does not exist.
+      const capability = (await this.capabilities()).find((c) => c.id === tool);
+      if (!capability || capability.support === 'unsupported')
+        throw new Error('Tool unavailable in the current session.');
+      // Everything but the local sample tools needs a connected DAW.
+      if (!isLocalTool(tool) && !this.connected)
         throw new Error('Tool unavailable in the current adapter session.');
       call = { ...call, arguments: validated };
       if (capability.risk !== 'read') {
@@ -168,6 +199,26 @@ export class Orchestrator {
         });
       }
       return await this.execute(call);
+    } catch (error) {
+      return this.record({ ...call, status: 'failed', detail: errorText(error) });
+    }
+  }
+  /**
+   * Local reads have no project state to snapshot and nothing to undo, so they
+   * take the same recorded path without the adapter's before/after handling.
+   */
+  private async executeLocal(call: Activity): Promise<Activity> {
+    await this.record({ ...call, status: 'running', detail: 'Reading the local sample index.' });
+    try {
+      if (!this.samples) throw new Error('No sample library is available.');
+      const detail =
+        call.tool === 'samples.stats'
+          ? await this.samples.stats()
+          : await this.samples.search(
+              toolSchemas['samples.search'].parse(call.arguments).query,
+              toolSchemas['samples.search'].parse(call.arguments).limit ?? 10,
+            );
+      return this.record({ ...call, status: 'succeeded', undoable: false, detail });
     } catch (error) {
       return this.record({ ...call, status: 'failed', detail: errorText(error) });
     }
@@ -245,6 +296,7 @@ export class Orchestrator {
     });
   }
   private async execute(call: Activity): Promise<Activity> {
+    if (isLocalTool(call.tool)) return this.executeLocal(call);
     let before: ProjectState;
     try {
       const available = await this.tools();

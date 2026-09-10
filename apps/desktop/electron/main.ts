@@ -1,13 +1,17 @@
-import { app, BrowserWindow, ipcMain, protocol, session } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, protocol, session } from 'electron';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
+import { realpath } from 'node:fs/promises';
 import { z } from 'zod';
 import { discoverAgents } from '@orchestrai/cli';
+import { indexRoot } from '@orchestrai/sample-indexer';
 import {
   historySchema,
   snapshotSchema,
   midiStatusSchema,
   providerIdSchema,
+  sampleLibrarySchema,
+  indexedSampleSchema,
   ipcInputs,
   sendSchema,
   callSchema,
@@ -21,7 +25,7 @@ import {
   type MidiStatus,
 } from '@orchestrai/shared-types';
 import { DatabaseService, RuntimeService } from './services';
-import { assetResponse, trustedURL, trustedSender } from './security';
+import { assetResponse, sampleResponse, trustedURL, trustedSender } from './security';
 import { redact } from './store';
 
 app.setName('OrchestrAI');
@@ -38,6 +42,12 @@ protocol.registerSchemesAsPrivileged([
     scheme: 'orchestra',
     privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true },
   },
+  {
+    // Media only: streaming needs range support, and nothing fetches this
+    // scheme from script.
+    scheme: 'orchestra-sample',
+    privileges: { standard: true, secure: true, stream: true, supportFetchAPI: false },
+  },
 ]);
 const developmentOrigin =
   !app.isPackaged && process.env.ORCHESTRA_DEV === '1' ? 'http://127.0.0.1:3210' : undefined;
@@ -46,6 +56,9 @@ let db: DatabaseService;
 let runtime: RuntimeService | null = null;
 let state: RuntimeState | null = null;
 let midi: MidiStatus | null = null;
+let indexing: string | null = null;
+let samples: Snapshot['samples'] = [];
+let library: Snapshot['library'] = { roots: [], total: 0 };
 /** Discovery ids are product names; provider ids are what the runtime selects. */
 const agentKey = (id: string) =>
   id === 'claude-code' ? 'claude' : id === 'codex' ? 'codex' : 'openai';
@@ -116,11 +129,62 @@ async function snapshot(): Promise<Snapshot> {
   return snapshotSchema.parse({
     runtime: state,
     midi,
+    library,
+    indexing,
+    samples,
     agents,
     history: lastHistory,
     logs,
     error: failure,
   });
+}
+/**
+ * Indexing is the first operation here that can take minutes, so progress is
+ * published as it goes and a failing root never stops the others.
+ */
+async function indexRoots(roots: string[]) {
+  for (const root of roots) {
+    indexing = `Indexing ${path.basename(root)}…`;
+    try {
+      // Incremental: what is already indexed for this root, so unchanged files
+      // are skipped rather than re-read.
+      const existing = new Map(
+        z
+          .array(indexedSampleSchema)
+          .parse(await db.execute({ type: 'samplesForRoot', root }))
+          .map((sample) => [sample.path, { size: sample.size, modifiedMs: sample.modifiedMs }]),
+      );
+      const report = await indexRoot(root, {
+        existing,
+        onProgress: (found) => {
+          indexing = `Indexing ${path.basename(root)}… ${found} samples`;
+        },
+      });
+      await db.execute({ type: 'indexed', report });
+      log(
+        'samples.indexed',
+        `${report.root}: +${report.added} ~${report.updated} -${report.removed.length}`,
+      );
+    } catch (error) {
+      log('samples.index_failed', errorText(error));
+      await db.execute({
+        type: 'indexed',
+        report: {
+          root,
+          samples: [],
+          added: 0,
+          updated: 0,
+          removed: [],
+          skipped: 0,
+          truncated: false,
+          errors: [errorText(error)],
+          indexedAt: new Date().toISOString(),
+        },
+      });
+    }
+  }
+  indexing = null;
+  library = sampleLibrarySchema.parse(await db.execute({ type: 'library' }));
 }
 async function invoke(method: IpcMethod, input: unknown): Promise<Snapshot> {
   const value = ipcInputs[method].parse(input);
@@ -159,6 +223,38 @@ async function invoke(method: IpcMethod, input: unknown): Promise<Snapshot> {
               errors: result.error ? [result.error] : [],
             }
           : agent,
+      );
+    }
+    if (method === 'addSampleFolder') {
+      const chosen = await dialog.showOpenDialog(window!, {
+        title: 'Choose a sample folder',
+        properties: ['openDirectory'],
+      });
+      // Indexing records canonical paths, so a root is stored canonically too;
+      // otherwise the same folder appears twice under two spellings.
+      const folder = chosen.canceled ? null : await realpath(chosen.filePaths[0]);
+      if (folder) {
+        await db.execute({ type: 'addRoot', path: folder });
+        await indexRoots([folder]);
+      }
+    }
+    if (method === 'removeSampleFolder') {
+      await db.execute({
+        type: 'removeRoot',
+        path: ipcInputs.removeSampleFolder.parse(value).path,
+      });
+      library = sampleLibrarySchema.parse(await db.execute({ type: 'library' }));
+      samples = [];
+    }
+    if (method === 'reindexSamples') await indexRoots(library.roots.map((root) => root.path));
+    if (method === 'searchSamples') {
+      const input = ipcInputs.searchSamples.parse(value);
+      samples = z.array(indexedSampleSchema).parse(
+        await db.execute({
+          type: 'searchSamples',
+          query: input.query,
+          limit: input.limit ?? 25,
+        }),
       );
     }
     if (method === 'connect') {
@@ -291,12 +387,19 @@ const ready = app
     protocol.handle('orchestra', (request) =>
       assetResponse(path.join(__dirname, '../renderer/out'), request.url),
     );
+    protocol.handle('orchestra-sample', (request) =>
+      sampleResponse(request.url, async (file) => {
+        const sample = await db.execute({ type: 'sampleByPath', path: file });
+        return sample !== null;
+      }),
+    );
     session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) =>
       callback(false),
     );
     db = createDatabase();
     await db.ready;
     agents = await discoverAgents();
+    library = sampleLibrarySchema.parse(await db.execute({ type: 'library' }));
     await startRuntime();
     try {
       midi = midiStatusSchema.parse(await runtime!.control({ type: 'midi' }));

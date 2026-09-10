@@ -3,6 +3,7 @@ import {
   projectSchema,
   toolNames,
   toolSchemas,
+  isLocalTool,
   type Capability,
   type DawAdapter,
   type DawCommand,
@@ -125,13 +126,16 @@ export class CubaseBridgeAdapter implements DawAdapter {
   }
   async getCapabilities(): Promise<Capability[]> {
     const reported = new Set(this.session?.operations ?? []);
-    return toolNames.map((id) => ({
-      id,
-      // Capability truth comes from the handshake, never from a static list.
-      support: reported.has(id) ? 'bridge' : 'unsupported',
-      risk: id.includes('.get_') ? 'read' : 'safe-write',
-      requiresConfirmation: !id.includes('.get_'),
-    }));
+    // An adapter speaks for the DAW only; local tools are not its business.
+    return toolNames
+      .filter((id) => !isLocalTool(id))
+      .map((id) => ({
+        id,
+        // Capability truth comes from the handshake, never from a static list.
+        support: reported.has(id) ? 'bridge' : 'unsupported',
+        risk: id.includes('.get_') ? 'read' : 'safe-write',
+        requiresConfirmation: !id.includes('.get_'),
+      }));
   }
   async getProjectState(): Promise<ProjectState> {
     this.assertConnected();
