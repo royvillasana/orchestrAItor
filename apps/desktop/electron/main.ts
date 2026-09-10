@@ -197,7 +197,7 @@ async function createWindow() {
     width: 1440,
     height: 960,
     minWidth: 1000,
-    minHeight: 700,
+    minHeight: 720,
     backgroundColor: '#111315',
     title: 'OrchestrAI',
     webPreferences: {

@@ -28,6 +28,17 @@ async function launch() {
   }
   return page;
 }
+async function assertFits(page, label) {
+  // The desktop shell owns its window size; no screen may scroll the document.
+  const overflow = await page.evaluate(() => ({
+    x: document.documentElement.scrollWidth - window.innerWidth,
+    y: document.documentElement.scrollHeight - window.innerHeight,
+  }));
+  assert.ok(
+    overflow.x <= 0 && overflow.y <= 0,
+    `${label} must fit the window without scrollbars (overflow ${JSON.stringify(overflow)}).`,
+  );
+}
 function runtimePid() {
   const mainPid = app.process().pid;
   const rows = execFileSync('ps', ['-axo', 'pid,ppid,command'], { encoding: 'utf8' }).split('\n');
@@ -40,12 +51,14 @@ function runtimePid() {
 try {
   let page = await launch();
   await page.screenshot({ path: 'artifacts/connections.png', fullPage: true });
+  await assertFits(page, 'The connection screen');
   const button = page.getByRole('button', { name: 'Open demo studio' });
   await button.click({ timeout: 25000 });
   await page.getByRole('heading', { name: 'Studio conversation' }).waitFor();
   await page.waitForFunction(
     () => document.querySelector('[data-testid="tempo"]')?.textContent === '122',
   );
+  await assertFits(page, 'The workspace');
   assert.equal(await page.evaluate(() => typeof window.require), 'undefined');
   assert.equal(await page.evaluate(() => typeof window.process), 'undefined');
   await page.screenshot({ path: 'artifacts/workspace.png', fullPage: true });

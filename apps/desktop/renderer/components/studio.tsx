@@ -204,29 +204,31 @@ export function Studio({ setup = false }: { setup?: boolean }) {
   );
   if (setup)
     return (
-      <main className="min-h-screen bg-ink">
-        <header className="flex h-20 items-center justify-between border-b border-line px-10">
+      <main className="flex h-screen flex-col overflow-hidden bg-ink">
+        <header className="flex h-16 shrink-0 items-center justify-between border-b border-line px-6 tall:h-20 tall:px-10">
           {brand}
           <div className="flex items-center gap-4">
-            <span className="text-xs text-muted">YOUR STUDIO. CONNECTED.</span>
+            <span className="hidden text-xs text-muted lg:inline">YOUR STUDIO. CONNECTED.</span>
             <Pill>Milestone 01</Pill>
           </div>
         </header>
         {errorBanner}
-        <div className="mx-auto max-w-5xl px-10 pb-16 pt-16">
-          <div className="mb-10 flex items-end justify-between">
-            <div>
-              <p className="mb-4 font-mono text-xs tracking-[0.2em] text-accent">
+        <div className="mx-auto flex min-h-0 w-full max-w-5xl flex-1 xl:max-w-6xl flex-col justify-center gap-4 px-6 py-5 tall:gap-5 tall:px-10 tall:py-8">
+          <div className="flex shrink-0 items-end justify-between gap-6">
+            <div className="min-w-0">
+              <p className="mb-2 font-mono text-xs tracking-[0.2em] text-accent tall:mb-4">
                 01 / CONNECT YOUR STUDIO
               </p>
-              <h1 className="text-4xl font-medium tracking-tight">Your next idea starts here.</h1>
-              <p className="mt-4 max-w-xl text-sm leading-7 text-muted">
+              <h1 className="text-3xl font-medium tracking-tight tall:text-4xl">
+                Your next idea starts here.
+              </h1>
+              <p className="mt-2 max-w-xl text-sm leading-6 text-muted tall:mt-4 tall:leading-7">
                 Your sounds. Your instruments. Your way of working.
                 <br />
                 Bring your production environment into one creative conversation.
               </p>
             </div>
-            <span className="mb-2 hidden text-accent/20 sm:block">
+            <span className="mb-2 hidden shrink-0 text-accent/20 lg:block">
               <svg width="120" height="65" viewBox="0 0 120 65" fill="none" aria-hidden="true">
                 {[15, 26, 45, 60, 34, 50, 23, 40, 18, 30, 52, 22].map((h, i) => (
                   <path
@@ -240,20 +242,20 @@ export function Studio({ setup = false }: { setup?: boolean }) {
               </svg>
             </span>
           </div>
-          <div className="grid grid-cols-2 gap-5">
-            <section className="rounded-2xl border border-line bg-panel p-7">
-              <div className="mb-7 flex items-center justify-between">
+          <div className="grid min-h-0 grid-cols-2 gap-4 tall:gap-5">
+            <section className="flex min-w-0 flex-col rounded-2xl border border-line bg-panel p-5 tall:p-7">
+              <div className="mb-4 flex items-center justify-between tall:mb-6">
                 <h2 className="text-sm font-medium">
                   <span className="mr-3 text-muted">01</span> Production environment
                 </h2>
                 <Icon kind="wave" className="text-muted" />
               </div>
-              <div className="rounded-xl border border-accent/40 bg-accent/5 p-5">
+              <div className="rounded-xl border border-accent/40 bg-accent/5 p-4 tall:p-5">
                 <div className="flex items-center gap-4">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-raised text-paper">
+                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-raised text-paper tall:h-12 tall:w-12">
                     <Icon kind="wave" />
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <h3 className="font-medium">Cubase 14</h3>
                     <p className="mt-1 text-xs text-muted">Mock adapter · Local sandbox</p>
                   </div>
@@ -261,12 +263,12 @@ export function Studio({ setup = false }: { setup?: boolean }) {
                     <Icon kind="check" />
                   </span>
                 </div>
-                <p className="mt-5 border-t border-accent/10 pt-4 text-xs leading-6 text-muted">
+                <p className="mt-4 border-t border-accent/10 pt-3 text-xs leading-5 text-muted tall:mt-5 tall:pt-4 tall:leading-6">
                   Explore a fixture project, tempo, and transport. Your real Cubase projects are
                   untouched.
                 </p>
               </div>
-              <div className="mt-5 flex flex-wrap gap-2">
+              <div className="mt-4 flex flex-wrap gap-2 tall:mt-5">
                 {['Ableton Live', 'Logic Pro', 'REAPER'].map((name) => (
                   <span
                     key={name}
@@ -277,24 +279,24 @@ export function Studio({ setup = false }: { setup?: boolean }) {
                 ))}
               </div>
             </section>
-            <section className="rounded-2xl border border-line bg-panel p-7">
-              <div className="mb-7 flex items-center justify-between">
+            <section className="flex min-w-0 flex-col rounded-2xl border border-line bg-panel p-5 tall:p-7">
+              <div className="mb-4 flex items-center justify-between tall:mb-6">
                 <h2 className="text-sm font-medium">
                   <span className="mr-3 text-muted">02</span> Creative partner
                 </h2>
                 <button
                   disabled={busy || !desktop}
                   onClick={() => void run((api) => api.discover({}))}
-                  className="text-xs text-muted hover:text-accent"
+                  className="shrink-0 text-xs text-muted hover:text-accent"
                 >
                   Refresh detection ↻
                 </button>
               </div>
-              <div className="mb-4 flex items-center gap-4 rounded-xl border border-accent/40 bg-accent/5 p-4">
-                <div className="rounded-lg bg-accent/10 p-3 text-accent">
+              <div className="mb-3 flex items-center gap-4 rounded-xl border border-accent/40 bg-accent/5 p-4 tall:mb-4">
+                <div className="shrink-0 rounded-lg bg-accent/10 p-3 text-accent">
                   <Icon kind="spark" />
                 </div>
-                <div>
+                <div className="min-w-0">
                   <h3 className="text-sm font-medium">Demo agent</h3>
                   <p className="mt-1 text-xs text-muted">Deterministic · No account needed</p>
                 </div>
@@ -309,52 +311,52 @@ export function Studio({ setup = false }: { setup?: boolean }) {
                 <div
                   key={agent.id}
                   title={agent.executable ?? undefined}
-                  className="flex items-center justify-between border-b border-line py-3 text-xs"
+                  className="flex items-center justify-between gap-3 border-b border-line py-2.5 text-xs tall:py-3"
                 >
-                  <span>{agent.name}</span>
-                  <span className="text-muted">
+                  <span className="truncate">{agent.name}</span>
+                  <span className="shrink-0 text-muted">
                     {agent.installed ? 'Detected · Auth unverified' : 'CLI not installed'}
                   </span>
                 </div>
               ))}
-              <p className="mt-4 text-[11px] leading-5 text-muted">
+              <p className="mt-3 text-[11px] leading-5 text-muted tall:mt-4">
                 Live CLI sessions and OpenAI / Anthropic API connections arrive in a later
                 milestone.
               </p>
             </section>
           </div>
-          <div className="mt-5 flex items-center gap-4 rounded-xl border border-dashed border-line px-6 py-5">
-            <Icon kind="folder" className="text-muted" />
-            <div>
+          <div className="flex shrink-0 items-center gap-4 rounded-xl border border-dashed border-line px-5 py-4 tall:px-6 tall:py-5">
+            <Icon kind="folder" className="shrink-0 text-muted" />
+            <div className="min-w-0">
               <h2 className="text-sm">Your sample libraries</h2>
               <p className="mt-1 text-xs text-muted">
                 Local indexing and sample search are planned for Milestone 03.
               </p>
             </div>
-            <span className="ml-auto text-xs text-muted">Coming later</span>
+            <span className="ml-auto shrink-0 text-xs text-muted">Coming later</span>
           </div>
-          <div className="mt-9 flex items-center justify-between">
+          <div className="flex shrink-0 items-center justify-between gap-6 tall:mt-3">
             <p className="flex items-center gap-2 text-xs text-muted">
-              <span className="h-1.5 w-1.5 rounded-full bg-accent" />
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />
               Local first. No audio or libraries uploaded.
             </p>
             <button
               disabled={busy || !desktop || !data || !!data.error}
               onClick={() => void connect()}
-              className="flex items-center gap-8 rounded-xl bg-accent px-6 py-4 text-sm font-semibold text-ink transition hover:bg-accent/90 disabled:opacity-40"
+              className="flex shrink-0 items-center gap-8 rounded-xl bg-accent px-6 py-3.5 text-sm font-semibold text-ink transition hover:bg-accent/90 disabled:opacity-40 tall:py-4"
             >
               {busy ? 'Connecting…' : 'Open demo studio'}
               <Icon kind="arrow" />
             </button>
           </div>
-          <p className="mt-12 text-center font-mono text-[10px] uppercase tracking-widest text-muted/60">
+          <p className="hidden shrink-0 text-center font-mono text-[10px] uppercase tracking-widest text-muted/60 tall:mt-6 tall:block">
             Built around the tools you already love.
           </p>
         </div>
       </main>
     );
   return (
-    <main className="flex h-screen min-h-[700px] flex-col overflow-hidden bg-ink">
+    <main className="flex h-screen flex-col overflow-hidden bg-ink">
       <header className="flex h-[72px] shrink-0 items-center justify-between border-b border-line px-6">
         {brand}
         <div className="flex items-center gap-3">

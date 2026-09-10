@@ -1,5 +1,8 @@
 @import 'tailwindcss';
 
+/* Desktop-only app: layouts fit the window instead of scrolling the page. */
+@custom-variant tall (@media (min-height: 880px));
+
 @theme {
   --color-ink: #101214;
   --color-panel: #171a1d;
@@ -14,6 +17,10 @@
 }
 
 @layer base {
+  html,
+  body {
+    @apply h-full overflow-hidden overscroll-none;
+  }
   body {
     @apply bg-ink text-paper antialiased;
   }
