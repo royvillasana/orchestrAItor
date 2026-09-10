@@ -22,8 +22,17 @@ import {
 import type { MidiTransport } from './transport';
 
 export const DEFAULT_REQUEST_TIMEOUT_MS = 4000;
+/**
+ * Pairing happens inside Cubase's MIDI Remote Manager while this side waits.
+ * When this process publishes the port pair itself, those ports exist only
+ * while the transport is open, so the handshake must hold them open long
+ * enough for a producer to switch to Cubase and pair.
+ */
+export const DEFAULT_HANDSHAKE_TIMEOUT_MS = 60000;
+export const HANDSHAKE_RETRY_MS = 2000;
 export interface BridgeOptions {
   timeoutMs?: number;
+  handshakeTimeoutMs?: number;
   log?: (event: string, detail: string) => void;
 }
 export interface BridgeSession {
@@ -48,6 +57,7 @@ export class CubaseBridgeAdapter implements DawAdapter {
   >();
   private session: BridgeSession | null = null;
   private timeoutMs: number;
+  private handshakeTimeoutMs: number;
   private log: (event: string, detail: string) => void;
   constructor(
     private transport: MidiTransport,
@@ -55,6 +65,7 @@ export class CubaseBridgeAdapter implements DawAdapter {
     options: BridgeOptions = {},
   ) {
     this.timeoutMs = options.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+    this.handshakeTimeoutMs = options.handshakeTimeoutMs ?? DEFAULT_HANDSHAKE_TIMEOUT_MS;
     this.log = options.log ?? (() => {});
   }
   get connected() {
@@ -69,9 +80,7 @@ export class CubaseBridgeAdapter implements DawAdapter {
     this.unsubscribe = this.transport.onMessage((bytes) => this.receive(bytes));
     let hello;
     try {
-      hello = helloResultSchema.parse(
-        await this.request({ op: 'hello', protocol: PROTOCOL_VERSION }),
-      );
+      hello = helloResultSchema.parse(await this.handshake());
     } catch (error) {
       await this.teardown();
       throw error instanceof Error ? error : new Error(String(error));
@@ -86,6 +95,33 @@ export class CubaseBridgeAdapter implements DawAdapter {
   }
   async disconnect() {
     await this.teardown();
+  }
+  /**
+   * Retries the handshake without closing the transport, so published ports
+   * stay visible to Cubase for the whole window instead of disappearing after
+   * the first unanswered request.
+   */
+  private async handshake(): Promise<unknown> {
+    const deadline = Date.now() + this.handshakeTimeoutMs;
+    let attempts = 0;
+    for (;;) {
+      attempts++;
+      try {
+        return await this.request(
+          { op: 'hello', protocol: PROTOCOL_VERSION },
+          { timeoutMs: Math.min(HANDSHAKE_RETRY_MS, this.timeoutMs), disconnectOnTimeout: false },
+        );
+      } catch (error) {
+        if (Date.now() >= deadline)
+          throw new Error(
+            `Cubase did not answer the bridge handshake within ${Math.round(
+              this.handshakeTimeoutMs / 1000,
+            )}s after ${attempts} attempts. Pair the OrchestrAI Bridge script in Cubase's MIDI Remote Manager while the ports are published. (${
+              error instanceof Error ? error.message : String(error)
+            })`,
+          );
+      }
+    }
   }
   async getCapabilities(): Promise<Capability[]> {
     const reported = new Set(this.session?.operations ?? []);
@@ -120,8 +156,13 @@ export class CubaseBridgeAdapter implements DawAdapter {
   private assertConnected() {
     if (!this.session) throw new Error('The Cubase bridge is disconnected.');
   }
-  private async request(payload: BridgeRequest): Promise<unknown> {
+  private async request(
+    payload: BridgeRequest,
+    options: { timeoutMs?: number; disconnectOnTimeout?: boolean } = {},
+  ): Promise<unknown> {
     const request = requestSchema.parse(payload);
+    const timeoutMs = options.timeoutMs ?? this.timeoutMs;
+    const disconnectOnTimeout = options.disconnectOnTimeout ?? true;
     this.correlation = (this.correlation + 1) & 0x7f;
     const correlation = this.correlation;
     const frame = encodeFrame({ kind: 'request', correlation, payload: JSON.stringify(request) });
@@ -131,11 +172,11 @@ export class CubaseBridgeAdapter implements DawAdapter {
         this.log('bridge.timeout', request.op);
         // A silent DAW is a disconnected DAW; leaving the session "connected"
         // would let the next write queue against a peer that is not listening.
-        void this.teardown();
-        reject(
-          new Error(`The Cubase bridge did not answer ${request.op} within ${this.timeoutMs} ms.`),
-        );
-      }, this.timeoutMs);
+        // The handshake is the exception: nothing is connected yet, and the
+        // published ports must stay visible for Cubase to pair with them.
+        if (disconnectOnTimeout) void this.teardown();
+        reject(new Error(`The Cubase bridge did not answer ${request.op} within ${timeoutMs} ms.`));
+      }, timeoutMs);
       this.pending.set(correlation, { resolve, reject, timer });
       this.transport.send(frame).catch((error: unknown) => {
         clearTimeout(timer);

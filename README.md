@@ -83,20 +83,30 @@ F0 7D <protocol> <kind> <correlation> <len-hi> <len-lo> <payload…> <checksum> 
 
 Payloads are JSON encoded 8-to-7 so arbitrary UTF-8 survives MIDI, capped at 4 KB, and never fragmented. Every request carries a correlation value and a timeout; a response that never arrives fails the request and disconnects the bridge, so a dropped write is never reported as applied. On connect, a handshake exchanges protocol versions and returns the Cubase version and the operations the script implements — **tool exposure comes from that report**, not from a static list, and a protocol mismatch fails the connection naming both versions.
 
-### Installing the driver script
+### Setting up the bridge
 
-Copy `resources/cubase/orchestrai_bridge.js` into Cubase's MIDI Remote driver scripts folder:
+```sh
+pnpm add -w -D @julusian/midi   # optional MIDI backend
+pnpm install:cubase-script      # copies the driver script into Cubase
+```
 
-- macOS: `~/Documents/Steinberg/Cubase/MIDI Remote/Driver Scripts/Local/OrchestrAI/OrchestrAI_Bridge/`
-- Windows: `%USERPROFILE%\Documents\Steinberg\Cubase\MIDI Remote\Driver Scripts\Local\OrchestrAI\OrchestrAI_Bridge\`
+The script lands in `~/Documents/Steinberg/Cubase/MIDI Remote/Driver Scripts/Local/OrchestrAI/Bridge/` (`%USERPROFILE%\Documents\...` on Windows). Cubase reads that folder at startup, so it can be installed before Cubase has ever been launched.
 
-Create a virtual MIDI port pair named `OrchestrAI Bridge` (macOS: Audio MIDI Setup → IAC Driver; Windows: loopMIDI or similar), pair it in Cubase's MIDI Remote Manager, then choose **Refresh detection** in OrchestrAI. Targets Cubase 12 and newer.
+No IAC bus or loopMIDI setup is needed: when no `OrchestrAI Bridge` port pair exists, connecting the bridge **publishes its own CoreMIDI endpoints** under that name. Those ports exist only while the bridge is connecting or connected, so the order matters:
+
+1. Start Cubase (12 or newer).
+2. In OrchestrAI, choose **Cubase · Live bridge** and connect. The ports appear and the handshake retries for 60 seconds.
+3. While it waits, pair **OrchestrAI Bridge** in Cubase's _MIDI Remote Manager_, and make sure its mapping page is active — the script refuses writes until Cubase activates the page.
+
+The handshake completes as soon as the script answers, and the header then shows the Cubase version with a `live` indicator.
 
 The MIDI backend is an **optional** dependency, deliberately not installed by default, so `pnpm install` still never triggers an Electron native rebuild. Without it the bridge reports itself unavailable with the install command, and the mock stays fully usable. Install it with `pnpm add -w -D @julusian/midi`.
 
 ### What is verified, and what is not
 
-Automated tests exercise the real protocol end to end over an in-process loopback against a simulated Cubase peer, and assert that the **shipped driver script** encodes and decodes byte-for-byte identically to the host implementation. Live control of Cubase is **not** covered by the automated suite — this repository has no Cubase installation. To verify manually: install the script, pair the ports, connect the live bridge, confirm the header shows the Cubase version and `live`, then approve a tempo change and confirm it in Cubase's transport panel. Windows bridge verification is deferred alongside the existing Windows smoke limitation.
+Automated tests exercise the real protocol end to end over an in-process loopback against a simulated Cubase peer, assert that the **shipped driver script** encodes and decodes byte-for-byte identically to the host implementation, and load that same script against a stub shaped after Cubase 15's own `midiremote_api_v1` definition — so the Cubase-facing half (device/port registration, transport value bindings, `setTempoBPM`, and the refusal to write before the mapping page is active) is covered too.
+
+What automation still cannot cover is Cubase's own interpretation of those calls. To verify manually: follow the setup above, then approve a tempo change and confirm it in Cubase's transport panel. Windows bridge verification is deferred alongside the existing Windows smoke limitation.
 
 ## Local data and recovery
 

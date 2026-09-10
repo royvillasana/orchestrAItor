@@ -17,10 +17,12 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "pnpm build:desktop && vitest run",
-    "test:smoke": "node scripts/smoke.mjs"
+    "test:smoke": "node scripts/smoke.mjs",
+    "install:cubase-script": "node scripts/install-cubase-script.mjs"
   },
   "devDependencies": {
     "@eslint/js": "9.39.1",
+    "@julusian/midi": "^3.8.1",
     "@modelcontextprotocol/sdk": "1.30.0",
     "@types/node": "22.19.1",
     "@types/react": "19.2.7",

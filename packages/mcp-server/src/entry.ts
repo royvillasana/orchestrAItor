@@ -4,6 +4,7 @@ import {
   CubaseBridgeAdapter,
   MockCubaseAdapter,
   PlatformMidiTransport,
+  virtualPortId,
   type MidiPort,
 } from '@orchestrai/cubase';
 import { DemoProvider } from '@orchestrai/agent-core';
@@ -70,16 +71,11 @@ async function buildAdapter(id: AdapterId) {
     throw new Error(status.reason ?? 'No MIDI backend is available for the Cubase bridge.');
   const match = (direction: 'input' | 'output') =>
     status.ports.find((port) => port.direction === direction && port.name.includes(bridgePortName));
-  const input = match('input');
-  const output = match('output');
-  if (!input || !output)
-    throw new Error(
-      `No "${bridgePortName}" MIDI port pair was found. Install the OrchestrAI driver script in Cubase and pair it in the MIDI Remote Manager.`,
-    );
-  return new CubaseBridgeAdapter(new PlatformMidiTransport(), {
-    input: input.id,
-    output: output.id,
-  });
+  // Publish our own CoreMIDI endpoints when the pair does not already exist, so
+  // a producer never has to hand-configure an IAC bus before pairing in Cubase.
+  const input = match('input')?.id ?? virtualPortId(bridgePortName);
+  const output = match('output')?.id ?? virtualPortId(bridgePortName);
+  return new CubaseBridgeAdapter(new PlatformMidiTransport(), { input, output });
 }
 const server = createMcpServer(orchestration);
 let chatting = false;

@@ -180,9 +180,7 @@ export function Studio({ setup = false }: { setup?: boolean }) {
   // producer cannot use it is more useful than a button that always fails.
   const bridgeUnavailable = data?.midi
     ? data.midi.available
-      ? data.midi.ports.some((port) => port.name.includes('OrchestrAI Bridge'))
-        ? null
-        : 'Unavailable: no "OrchestrAI Bridge" MIDI port pair was found. Install the driver script in Cubase and pair it in the MIDI Remote Manager.'
+      ? null
       : `Unavailable: ${data.midi.reason ?? 'no MIDI backend.'}${data.midi.remedy ? ` ${data.midi.remedy}` : ''}`
     : 'Unavailable: MIDI detection has not run yet. Choose Refresh detection.';
   useEffect(() => {
@@ -285,7 +283,7 @@ export function Studio({ setup = false }: { setup?: boolean }) {
                       title: 'Cubase · Live bridge',
                       subtitle: 'MIDI Remote · Changes your open session',
                       detail:
-                        'Requires Cubase 12 or newer with the OrchestrAI driver script installed and paired.',
+                        'Publishes an "OrchestrAI Bridge" MIDI port pair. Requires Cubase 12 or newer with the driver script paired.',
                       unavailable: bridgeUnavailable,
                     },
                   ] as const

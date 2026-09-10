@@ -52,12 +52,21 @@ try {
   let page = await launch();
   await page.screenshot({ path: 'artifacts/connections.png', fullPage: true });
   await assertFits(page, 'The connection screen');
-  // This machine ships no MIDI backend, so the live bridge must present itself
-  // as unavailable rather than as a connection that will fail.
+  // The live bridge must describe itself truthfully on whatever machine runs
+  // this: connectable only when a MIDI backend is actually present, and
+  // otherwise disabled with the reason rather than a button that always fails.
   const bridge = page.getByRole('radio', { name: /Cubase . Live bridge/ });
   await bridge.waitFor();
-  assert.equal(await bridge.isDisabled(), true);
-  assert.match(await bridge.innerText(), /Unavailable:/);
+  const backend = await page.evaluate(async () => (await window.orchestra.snapshot({})).midi);
+  if (backend?.available) {
+    assert.equal(await bridge.isDisabled(), false);
+    assert.doesNotMatch(await bridge.innerText(), /Unavailable:/);
+  } else {
+    assert.equal(await bridge.isDisabled(), true);
+    assert.match(await bridge.innerText(), /Unavailable:/);
+  }
+  // The mock stays the default either way: a live session is never entered by
+  // accident.
   assert.equal(
     await page.getByRole('radio', { name: /Cubase 14 . Mock/ }).getAttribute('aria-checked'),
     'true',

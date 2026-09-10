@@ -163,6 +163,55 @@ describe('Cubase bridge adapter', () => {
     await adapter.disconnect();
     await peer.stop();
   });
+  it('keeps published ports open across handshake retries until the window closes', async () => {
+    const pair = new LoopbackMidiPair();
+    const hostTransport = pair.host();
+    let replies = 0;
+    const peer = new SimulatedCubasePeer(pair.peer(), () => {
+      replies++;
+      return {
+        ok: true,
+        result: { protocol: PROTOCOL_VERSION, daw: 'Cubase 15', operations: ['project.get_state'] },
+      };
+    });
+    await peer.start();
+    // Cubase is not paired yet: the peer stays silent, and the transport must
+    // remain open the whole time so its ports stay visible for pairing.
+    peer.silent = true;
+    const adapter = new CubaseBridgeAdapter(
+      hostTransport,
+      { input: 'h', output: 'h' },
+      { timeoutMs: 60, handshakeTimeoutMs: 600 },
+    );
+    const connecting = adapter.connect();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(hostTransport.opened).toBe(true);
+    expect(replies).toBe(0);
+    // The producer pairs the script partway through the window.
+    peer.silent = false;
+    await connecting;
+    expect(adapter.connected).toBe(true);
+    expect(adapter.connectedDaw).toBe('Cubase 15');
+    await adapter.disconnect();
+    expect(hostTransport.opened).toBe(false);
+    await peer.stop();
+  });
+  it('closes the transport when the handshake window expires', async () => {
+    const pair = new LoopbackMidiPair();
+    const hostTransport = pair.host();
+    const peer = new SimulatedCubasePeer(pair.peer(), () => ({ ok: true, result: {} }));
+    await peer.start();
+    peer.silent = true;
+    const adapter = new CubaseBridgeAdapter(
+      hostTransport,
+      { input: 'h', output: 'h' },
+      { timeoutMs: 40, handshakeTimeoutMs: 120 },
+    );
+    await expect(adapter.connect()).rejects.toThrow(/did not answer the bridge handshake within/);
+    expect(adapter.connected).toBe(false);
+    expect(hostTransport.opened).toBe(false);
+    await peer.stop();
+  });
   it('fails the connection when the script speaks another protocol version', async () => {
     const pair = new LoopbackMidiPair();
     const peer = new SimulatedCubasePeer(pair.peer(), () => ({

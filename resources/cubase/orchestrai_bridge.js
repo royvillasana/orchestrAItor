@@ -173,44 +173,77 @@ if (api) {
     .detectPortPair(midiInput, midiOutput)
     .expectInputNameEquals('OrchestrAI Bridge')
     .expectOutputNameEquals('OrchestrAI Bridge');
+
   var page = deviceDriver.mMapping.makePage('OrchestrAI');
-  var state = { tempo: 120, playing: false, revision: 0, name: 'Cubase session', context: null };
+  var transport = page.mHostAccess.mTransport;
+
+  // Host values cannot be written directly: MR_HostValue exposes only
+  // increment/decrement. The supported path is a custom surface value bound to
+  // the host value, which this script then drives from a bridge request.
+  var startValue = deviceDriver.mSurface.makeCustomValueVariable('bridgeStart');
+  var stopValue = deviceDriver.mSurface.makeCustomValueVariable('bridgeStop');
+  page.makeValueBinding(startValue, transport.mValue.mStart);
+  page.makeValueBinding(stopValue, transport.mValue.mStop);
+
+  // Project state is what Cubase last reported, never what this script assumed:
+  // tempo and transport arrive through host callbacks.
+  var session = { device: null, mapping: null, tempo: 120, playing: false, revision: 0 };
+  transport.mTimeDisplay.mOnChangeTempoBPM = function (activeDevice, activeMapping, tempoBPM) {
+    session.tempo = tempoBPM;
+    session.revision++;
+  };
+  transport.mValue.mStart.mOnProcessValueChange = function (activeDevice, activeMapping, value) {
+    session.playing = value >= 0.5;
+    session.revision++;
+  };
+  page.mOnActivate = function (activeDevice, activeMapping) {
+    session.device = activeDevice;
+    session.mapping = activeMapping;
+  };
+  page.mOnDeactivate = function () {
+    session.device = null;
+    session.mapping = null;
+  };
+
+  function requireSession() {
+    if (!session.device || !session.mapping)
+      throw new Error('The OrchestrAI mapping page is not active in Cubase.');
+  }
   var hostSurface = {
     daw: function () {
       return 'Cubase (MIDI Remote)';
     },
     readProject: function () {
       return {
-        name: state.name,
-        tempo: state.tempo,
+        name: 'Cubase session',
+        tempo: session.tempo,
         key: 'Unknown',
         timeSignature: '4/4',
-        playing: state.playing,
-        revision: state.revision,
+        playing: session.playing,
+        revision: session.revision,
         mock: false,
         tracks: [],
       };
     },
     setTempo: function (tempo) {
-      if (state.context) page.setParameterValue(state.context, 'tempo', tempo);
-      state.tempo = tempo;
-      state.revision++;
+      requireSession();
+      transport.mTimeDisplay.setTempoBPM(session.mapping, tempo);
+      session.tempo = tempo;
+      session.revision++;
     },
     setPlaying: function (playing) {
-      if (state.context)
-        page.mHostAccess.mTransport.mValue[playing ? 'mStart' : 'mStop'].setProcessValue(
-          state.context,
-          1,
-        );
-      state.playing = playing;
-      state.revision++;
+      requireSession();
+      // A bound trigger reads as a button press: raise it, then release it.
+      var value = playing ? startValue : stopValue;
+      value.setProcessValue(session.device, 1);
+      value.setProcessValue(session.device, 0);
+      session.playing = playing;
+      session.revision++;
     },
   };
   var handle = createHandler(hostSurface);
-  page.mOnActivate = function (context) {
-    state.context = context;
-  };
-  midiInput.mOnSysex = function (context, sysex) {
+
+  midiInput.mOnSysex = function (activeDevice, sysex) {
     var decoded = decodeFrame(sysex);
     if (!decoded.ok || decoded.frame.kind !== 'request') return;
     var response;
@@ -220,7 +253,7 @@ if (api) {
       response = { ok: false, error: 'Malformed request payload.' };
     }
     midiOutput.sendMidi(
-      context,
+      activeDevice,
       encodeFrame({
         kind: 'response',
         correlation: decoded.frame.correlation,

@@ -99,14 +99,23 @@ class LoopbackMidiTransport implements MidiTransport {
  * rebuild, and a producer who only uses the mock should not pay that cost.
  */
 export const midiBackendModule = '@julusian/midi';
+/**
+ * A port id of `virtual:<name>` makes this process publish its own CoreMIDI
+ * endpoint under that name instead of opening an existing one. Cubase then sees
+ * a normal port pair, so pairing needs no IAC bus configured by hand first.
+ */
+export const VIRTUAL_PORT_PREFIX = 'virtual:';
+export const virtualPortId = (name: string) => `${VIRTUAL_PORT_PREFIX}${name}`;
 type MidiBinding = {
   Input: new () => RawPort & {
     openPort(index: number): void;
+    openVirtualPort(name: string): void;
     on(event: 'message', cb: (delta: number, message: number[]) => void): void;
     ignoreTypes(sysex: boolean, timing: boolean, activeSensing: boolean): void;
   };
   Output: new () => RawPort & {
     openPort(index: number): void;
+    openVirtualPort(name: string): void;
     sendMessage(message: number[]): void;
   };
 };
@@ -175,6 +184,8 @@ export class PlatformMidiTransport implements MidiTransport {
       if (!Number.isInteger(parsed) || parsed < 0) throw new Error(`Unknown MIDI port "${id}".`);
       return parsed;
     };
+    const virtualName = (id: string) =>
+      id.startsWith(VIRTUAL_PORT_PREFIX) ? id.slice(VIRTUAL_PORT_PREFIX.length) : null;
     const input = new binding.Input();
     // System Exclusive carries the bridge protocol, so it must not be filtered.
     input.ignoreTypes(false, true, true);
@@ -182,9 +193,13 @@ export class PlatformMidiTransport implements MidiTransport {
       const bytes = Uint8Array.from(message);
       for (const listener of [...this.listeners]) listener(bytes);
     });
-    input.openPort(index(selection.input));
+    const inputVirtual = virtualName(selection.input);
+    if (inputVirtual) input.openVirtualPort(inputVirtual);
+    else input.openPort(index(selection.input));
     const output = new binding.Output();
-    output.openPort(index(selection.output));
+    const outputVirtual = virtualName(selection.output);
+    if (outputVirtual) output.openVirtualPort(outputVirtual);
+    else output.openPort(index(selection.output));
     this.input = input;
     this.output = output;
     this.isOpen = true;
