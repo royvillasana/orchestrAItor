@@ -149,7 +149,9 @@ A live provider **sends the conversation and project state to its model provider
 
 `pnpm test:smoke-agent` runs the real thing: it verifies the sign-in, selects Claude Code, connects it alongside the live bridge, lets the model call tools through the permission path, approves the write, and asserts it reached the session. It costs model usage, so it is not part of `pnpm test`, and it skips when the CLI is absent or signed out.
 
-Codex is implemented against the same contract. Its happy path is **unverified here**: the account reached its usage limit during testing, which surfaced as a typed failure naming the CLI's own reason.
+Both providers are verified against the same workflow: `ORCHESTRA_AGENT=codex pnpm test:smoke-agent` runs it against Codex, and the default runs it against Claude Code.
+
+Two Codex specifics, both of them its own behaviour rather than ours. Its event stream has shipped two shapes — older builds wrap the payload in `msg` with a `message` field, current builds report `item.completed` carrying an `item` with `text` — and both are parsed, since the installed CLI belongs to the producer. And `codex exec` asks its own approval before calling a tool, which cannot be answered in a non-interactive turn; without `--approve-for-me` every tool call fails as "approval required". Its sandbox is scoped to the working directory, which is the empty temporary one created for that turn, and OrchestrAI's permission engine remains what guards the DAW.
 
 ## Sample libraries
 

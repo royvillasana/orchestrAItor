@@ -34,6 +34,9 @@ assert.equal(
   0,
   `An "OrchestrAI Bridge" port is already published (${conflicting.join(', ')}). Stop any standalone peer first.`,
 );
+const providerId = process.env.ORCHESTRA_AGENT ?? 'claude';
+const providerLabel = providerId === 'codex' ? 'Codex' : 'Claude Code';
+const discoveryId = providerId === 'codex' ? 'codex' : 'claude-code';
 const peer = await startCubasePeer({ tempo: 120 });
 const dataDirectory = await mkdtemp(path.join(tmpdir(), 'orchestrai-agent-smoke-'));
 const env = { ...process.env, ORCHESTRA_DATA_DIR: dataDirectory };
@@ -53,24 +56,27 @@ try {
   );
   // Discovery must never claim authentication it has not checked.
   const discovered = await page.evaluate(async () => (await window.orchestra.snapshot({})).agents);
-  const claude = discovered.find((agent) => agent.id === 'claude-code');
-  if (!claude?.installed) {
-    console.log('SKIP: the Claude Code CLI is not installed.');
+  const cli = discovered.find((agent) => agent.id === discoveryId);
+  if (!cli?.installed) {
+    console.log(`SKIP: the ${providerLabel} CLI is not installed.`);
     process.exit(0);
   }
-  assert.equal(claude.authentication, 'unverified', 'Discovery alone must not claim a sign-in.');
+  assert.equal(cli.authentication, 'unverified', 'Discovery alone must not claim a sign-in.');
 
   // Verification runs in the runtime child; call it and read its own result
   // rather than whichever poll happened to land first.
-  const verified = await page.evaluate(async () => {
-    const snapshot = await window.orchestra.verify({ agent: 'claude' });
-    return {
-      agent: snapshot.agents.find((agent) => agent.id === 'claude-code'),
-      error: snapshot.error,
-    };
-  });
+  const verified = await page.evaluate(
+    async ({ id, discovery }) => {
+      const snapshot = await window.orchestra.verify({ agent: id });
+      return {
+        agent: snapshot.agents.find((agent) => agent.id === discovery),
+        error: snapshot.error,
+      };
+    },
+    { id: providerId, discovery: discoveryId },
+  );
   if (verified.agent?.authentication !== 'authenticated') {
-    console.log(`SKIP: Claude Code is not signed in: ${JSON.stringify(verified)}`);
+    console.log(`SKIP: ${providerLabel} is not signed in: ${JSON.stringify(verified)}`);
     process.exit(0);
   }
   // The button a producer would use must exist while the CLI is unverified.
@@ -79,10 +85,10 @@ try {
     .first()
     .click()
     .catch(() => {});
-  console.log(`verified: ${verified.agent.account} · ${verified.agent.version}`);
+  console.log(`verified ${providerLabel}: ${verified.agent.account} · ${verified.agent.version}`);
 
-  const partner = page.getByRole('radio', { name: /Claude Code/ });
-  await untilEnabled(partner, { label: 'the Claude Code option' });
+  const partner = page.getByRole('radio', { name: new RegExp(providerLabel) });
+  await untilEnabled(partner, { label: `the ${providerLabel} option` });
   await partner.click();
   const bridge = page.getByRole('radio', { name: /Cubase . Live bridge/ });
   // A detection refresh in flight disables controls; wait for the real state.
@@ -97,7 +103,7 @@ try {
   await page.getByRole('button', { name: 'Connect live session' }).click();
   await page.getByRole('heading', { name: 'Studio conversation' }).waitFor({ timeout: 40000 });
   const state = await page.evaluate(async () => (await window.orchestra.snapshot({})).runtime);
-  assert.equal(state.provider, 'claude');
+  assert.equal(state.provider, providerId);
   assert.equal(state.providerLive, true);
   assert.equal(state.adapter, 'bridge');
 
@@ -110,7 +116,7 @@ try {
   assert.equal(await page.getByTestId('tempo').innerText(), '120', 'No write before approval.');
   const proposed = await page.evaluate(async () => (await window.orchestra.snapshot({})).history);
   assert.ok(
-    proposed.activities.some((activity) => activity.agent === 'claude'),
+    proposed.activities.some((activity) => activity.agent === providerId),
     'The live agent must own the activities it created.',
   );
   await page.getByRole('button', { name: 'Approve', exact: true }).click();
@@ -124,13 +130,24 @@ try {
   await until(
     page,
     async () => (await window.orchestra.snapshot({})).history.messages,
-    (messages) => messages.some((message) => message.provider === 'Claude Code'),
+    (messages) => messages.some((message) => message.provider === providerLabel),
     { timeout: 120000, label: "the live agent's answer to be persisted" },
   );
   // The transcript must attribute the answer to the provider that produced it.
-  const transcript = await page.locator('body').innerText();
-  assert.doesNotMatch(transcript, /Demo agent/, 'A live answer must not be labelled Demo agent.');
-  assert.match(transcript, /Claude Code/);
+  // Scoped to the messages: the partner selector lists every provider by name,
+  // so a whole-page match would find "Demo agent" in the switcher itself.
+  // The renderer polls, so a persisted message is not yet a rendered one.
+  const rendered = await until(
+    page,
+    () =>
+      [...document.querySelectorAll('[data-testid="transcript"] article')].map(
+        (node) => node.innerText,
+      ),
+    (texts) => texts.some((text) => text.includes(providerLabel)),
+    { timeout: 20000, label: "the agent's answer to render" },
+  );
+  const answer = rendered.find((text) => text.includes(providerLabel));
+  assert.doesNotMatch(answer, /Demo agent/, 'A live answer must not be labelled Demo agent.');
   const call = [...peer.api.log].reverse().find((entry) => entry.call === 'setTempoBPM');
   assert.ok(call && call.bpm === 126, 'The approved write must reach the driver script.');
   // The agent can reach the producer's own sounds through the same read path.
@@ -172,7 +189,7 @@ try {
     );
     assert.ok(
       searched.some(
-        (activity) => activity.tool === 'samples.search' && activity.agent === 'claude',
+        (activity) => activity.tool === 'samples.search' && activity.agent === providerId,
       ),
       'The agent must have used samples.search rather than guessing.',
     );

@@ -856,7 +856,7 @@ export function Studio({ setup = false }: { setup?: boolean }) {
                 </div>
               </div>
             ) : (
-              <div className="space-y-8">
+              <div className="space-y-8" data-testid="transcript">
                 {messages.map((message) => (
                   <article
                     key={message.id}

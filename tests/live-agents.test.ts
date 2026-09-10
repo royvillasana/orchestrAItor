@@ -143,11 +143,12 @@ describe('live provider', () => {
     ]);
     expect(state.model).toBe('claude-opus-5');
   });
-  it('reads a Codex event stream and records reported errors', () => {
-    const state = events();
+  it('reads both Codex event shapes and records reported errors', () => {
+    // Older builds: payload wrapped in `msg` with a `message` field.
+    const legacy = events();
     readCodexEvent(
       JSON.stringify({ msg: { type: 'agent_message', message: 'Tempo is 120.' } }),
-      state,
+      legacy,
     );
     readCodexEvent(
       JSON.stringify({
@@ -156,12 +157,49 @@ describe('live provider', () => {
           invocation: { tool: 'project.get_tempo', arguments: {} },
         },
       }),
-      state,
+      legacy,
     );
-    readCodexEvent(JSON.stringify({ msg: { type: 'error', message: 'usage limit' } }), state);
-    expect(state.text).toEqual(['Tempo is 120.']);
-    expect(state.toolCalls[0].name).toBe('project.get_tempo');
-    expect(state.error).toBe('usage limit');
+    readCodexEvent(JSON.stringify({ msg: { type: 'error', message: 'usage limit' } }), legacy);
+    expect(legacy.text).toEqual(['Tempo is 120.']);
+    expect(legacy.toolCalls[0].name).toBe('project.get_tempo');
+    expect(legacy.error).toBe('usage limit');
+
+    // Current builds (codex-cli 0.154): item.completed carrying `item.text`.
+    const current = events();
+    const deltas: string[] = [];
+    readCodexEvent(JSON.stringify({ type: 'thread.started', thread_id: 't' }), current);
+    readCodexEvent(JSON.stringify({ type: 'turn.started' }), current);
+    readCodexEvent(
+      JSON.stringify({
+        type: 'item.completed',
+        item: { id: 'i1', type: 'agent_message', text: 'ok' },
+      }),
+      current,
+      (text) => deltas.push(text),
+    );
+    readCodexEvent(
+      JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 21366 } }),
+      current,
+    );
+    expect(current.text).toEqual(['ok']);
+    expect(deltas).toEqual(['ok']);
+    expect(current.error).toBe(null);
+
+    // A shortened-skill notice is Codex describing its own configuration.
+    const noisy = events();
+    readCodexEvent(
+      JSON.stringify({
+        type: 'item.completed',
+        item: { type: 'error', message: 'Skill descriptions were shortened to fit the budget.' },
+      }),
+      noisy,
+    );
+    expect(noisy.error).toBe(null);
+    readCodexEvent(
+      JSON.stringify({ type: 'item.completed', item: { type: 'error', message: 'usage limit' } }),
+      noisy,
+    );
+    expect(noisy.error).toBe('usage limit');
   });
   it('tells the agent that writes need approval and never to claim otherwise', () => {
     const prompt = buildPrompt(

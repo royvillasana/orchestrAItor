@@ -84,19 +84,37 @@ export function readClaudeEvent(
 }
 export function readCodexEvent(line: string, events: TurnEvents, onDelta?: (text: string) => void) {
   const parsed = JSON.parse(line) as Record<string, unknown>;
-  const message = (parsed.msg ?? parsed) as Record<string, unknown>;
-  const type = message.type;
-  if (type === 'agent_message' && typeof message.message === 'string') {
-    events.text.push(message.message);
-    onDelta?.(message.message);
+  // Codex has shipped two event shapes: older builds wrap the payload in `msg`
+  // with a `message` field, current builds report `item.completed` carrying an
+  // `item` with a `text` field. Both are read, since the installed CLI is the
+  // producer's and this build does not get to choose its version.
+  const item = parsed.item as Record<string, unknown> | undefined;
+  const payload = (item ?? parsed.msg ?? parsed) as Record<string, unknown>;
+  const type = payload.type;
+  const body =
+    typeof payload.text === 'string'
+      ? payload.text
+      : typeof payload.message === 'string'
+        ? payload.message
+        : null;
+  if (type === 'agent_message' && body) {
+    events.text.push(body);
+    onDelta?.(body);
   }
   if (type === 'mcp_tool_call_begin' || type === 'mcp_tool_call') {
-    const invocation = message.invocation as { tool?: unknown; arguments?: unknown } | undefined;
-    if (typeof invocation?.tool === 'string')
+    const invocation = (payload.invocation ?? payload) as {
+      tool?: unknown;
+      server?: unknown;
+      arguments?: unknown;
+    };
+    if (typeof invocation.tool === 'string')
       events.toolCalls.push({ name: invocation.tool, input: invocation.arguments });
   }
-  if (type === 'error' && typeof message.message === 'string') events.error = message.message;
-  if (typeof message.model === 'string') events.model = message.model;
+  // A shortened-skill notice is Codex talking about its own configuration, not
+  // a failed turn; only real errors end one.
+  if (type === 'error' && body && !/skill descriptions were shortened/i.test(body))
+    events.error = body;
+  if (typeof payload.model === 'string') events.model = payload.model;
 }
 
 /**
@@ -158,8 +176,12 @@ export class LiveAgentProvider implements AgentProvider {
         'exec',
         '--json',
         '--skip-git-repo-check',
-        '--sandbox',
-        'read-only',
+        // Codex asks its own approval before calling a tool, and that prompt
+        // cannot be answered in a non-interactive turn: without this every tool
+        // call fails as "approval required". Its sandbox is scoped to the
+        // working directory, which is the empty temporary one created for this
+        // turn, and OrchestrAI's permission engine remains what guards the DAW.
+        '--approve-for-me',
         '-c',
         `mcp_servers.${MCP_SERVER_NAME}.command=${JSON.stringify(this.options.nodeExecutable)}`,
         '-c',
