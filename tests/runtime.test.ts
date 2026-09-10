@@ -39,6 +39,7 @@ describe('real MCP/runtime process', () => {
       (error) => failures.push(error),
       () => {},
       () => {},
+      () => {},
     );
     cleanup.push(async () => {
       await runtime.close();

@@ -13,7 +13,7 @@ import path from 'node:path';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { startCubasePeer } from './cubase-peer.mjs';
-import { until } from './until.mjs';
+import { until, untilEnabled } from './until.mjs';
 
 const require_ = createRequire(import.meta.url);
 try {
@@ -81,8 +81,13 @@ try {
     .catch(() => {});
   console.log(`verified: ${verified.agent.account} · ${verified.agent.version}`);
 
-  await page.getByRole('radio', { name: /Claude Code/ }).click();
-  await page.getByRole('radio', { name: /Cubase . Live bridge/ }).click();
+  const partner = page.getByRole('radio', { name: /Claude Code/ });
+  await untilEnabled(partner, { label: 'the Claude Code option' });
+  await partner.click();
+  const bridge = page.getByRole('radio', { name: /Cubase . Live bridge/ });
+  // A detection refresh in flight disables controls; wait for the real state.
+  await untilEnabled(bridge, { label: 'the bridge option' });
+  await bridge.click();
   const body = await page.locator('body').innerText();
   assert.match(
     body,

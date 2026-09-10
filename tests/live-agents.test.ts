@@ -171,6 +171,61 @@ describe('live provider', () => {
     expect(prompt).toContain('mcp__orchestrai__project.set_tempo');
     expect(prompt).toMatch(/never claim a change was applied/i);
   });
+  it('reports assistant text as it arrives, so the transcript can show it live', () => {
+    const state = events();
+    const deltas: string[] = [];
+    readClaudeEvent(
+      JSON.stringify({
+        type: 'assistant',
+        message: { content: [{ type: 'text', text: 'Looking at the session…' }] },
+      }),
+      state,
+      (text) => deltas.push(text),
+    );
+    readClaudeEvent(
+      JSON.stringify({
+        type: 'assistant',
+        message: { content: [{ type: 'tool_use', name: 'mcp__orchestrai__project.get_tempo' }] },
+      }),
+      state,
+      (text) => deltas.push(text),
+    );
+    readClaudeEvent(
+      JSON.stringify({
+        type: 'assistant',
+        message: { content: [{ type: 'text', text: 'It is at 120 BPM.' }] },
+      }),
+      state,
+      (text) => deltas.push(text),
+    );
+    // Only assistant text streams; a tool call is activity, not prose.
+    expect(deltas).toEqual(['Looking at the session…', 'It is at 120 BPM.']);
+    const codexState = events();
+    const codexDeltas: string[] = [];
+    readCodexEvent(
+      JSON.stringify({ msg: { type: 'agent_message', message: 'Tempo is 120.' } }),
+      codexState,
+      (text) => codexDeltas.push(text),
+    );
+    readCodexEvent(
+      JSON.stringify({ msg: { type: 'error', message: 'nope' } }),
+      codexState,
+      (text) => codexDeltas.push(text),
+    );
+    expect(codexDeltas).toEqual(['Tempo is 120.']);
+  });
+  it('streams the same text it finally returns', async () => {
+    const deltas: string[] = [];
+    const { provider } = await stubProvider(
+      `#!/bin/sh\necho '{"type":"assistant","message":{"content":[{"type":"text","text":"first"}]}}'\necho '{"type":"assistant","message":{"content":[{"type":"text","text":"second"}]}}'\n`,
+    );
+    (provider as unknown as { options: { onDelta?: (text: string) => void } }).options.onDelta = (
+      text,
+    ) => deltas.push(text);
+    const response = await provider.sendMessage(conversation, tools);
+    expect(deltas).toEqual(['first', 'second']);
+    expect(response.text).toBe('first\n\nsecond');
+  });
   it('asks the latest question, not the one the conversation was named after', () => {
     const message = (id: string, role: 'user' | 'assistant', content: string) => ({
       id,

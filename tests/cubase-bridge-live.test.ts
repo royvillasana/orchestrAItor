@@ -53,6 +53,7 @@ describe.skipIf(!backendPresent)('live bridge over real MIDI', () => {
       (error) => failures.push(error),
       () => {},
       () => {},
+      () => {},
     );
     await runtime.start();
   }, 60000);

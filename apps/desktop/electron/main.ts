@@ -23,6 +23,7 @@ import {
   type Activity,
   type RuntimeState,
   type MidiStatus,
+  type StreamChunk,
 } from '@orchestrai/shared-types';
 import { DatabaseService, RuntimeService } from './services';
 import { assetResponse, sampleResponse, trustedURL, trustedSender } from './security';
@@ -57,6 +58,7 @@ let runtime: RuntimeService | null = null;
 let state: RuntimeState | null = null;
 let midi: MidiStatus | null = null;
 let indexing: string | null = null;
+let streaming: StreamChunk | null = null;
 let samples: Snapshot['samples'] = [];
 let library: Snapshot['library'] = { roots: [], total: 0 };
 /** Discovery ids are product names; provider ids are what the runtime selects. */
@@ -104,12 +106,16 @@ async function startRuntime() {
     (error) => {
       failure = error;
       state = null;
+      streaming = null;
       log('runtime.error', error);
       void db
         .execute({ type: 'interrupt' })
         .catch((error) => log('database.error', errorText(error)));
     },
     activity,
+    (chunk) => {
+      streaming = chunk;
+    },
     log,
   );
   await runtime.start();
@@ -131,6 +137,7 @@ async function snapshot(): Promise<Snapshot> {
     midi,
     library,
     indexing,
+    streaming,
     samples,
     agents,
     history: lastHistory,

@@ -2,7 +2,9 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { BorderBeam } from 'border-beam';
 import { RichText } from './rich-text';
+import { ThinkingBubble, StreamingMessage, ToolChip, TurnError } from './chat-states';
 import type {
   Snapshot,
   OrchestraAPI,
@@ -246,6 +248,17 @@ export function Studio({ setup = false }: { setup?: boolean }) {
   const pending = calls.filter((c) => c.status === 'awaiting-approval');
   const visibleCalls = [...calls].reverse();
   const canWrite = connected && mode === 'assist' && !busy && !data?.error;
+  const providerLabel = runtime?.providerLabel ?? 'Demo agent';
+  const streaming = data?.streaming ?? null;
+  // A turn is live while the request is in flight or text is still arriving.
+  const turnRunning = busy || !!streaming;
+  const lastActivity = calls.at(-1);
+  const runningTool =
+    lastActivity && ['requested', 'running'].includes(lastActivity.status) ? lastActivity : null;
+  const failedTurn =
+    !turnRunning && lastActivity?.status === 'failed' && lastActivity.agent !== 'user'
+      ? lastActivity
+      : null;
   // Milestone 1 exists to keep mock state from reading as real. The same rule
   // runs the other way: a live session must never be labelled mock.
   const isMock = project ? project.mock : runtime?.adapter !== 'bridge';
@@ -824,70 +837,130 @@ export function Studio({ setup = false }: { setup?: boolean }) {
                         {message.content}
                       </p>
                     )}
+                    {message.role === 'assistant' && (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {calls
+                          .filter(
+                            (call) =>
+                              call.conversationId === message.conversationId &&
+                              call.agent !== 'user' &&
+                              Math.abs(
+                                new Date(call.timestamp).getTime() -
+                                  new Date(message.timestamp).getTime(),
+                              ) < 120000,
+                          )
+                          .map((call) => (
+                            <ToolChip
+                              key={call.id}
+                              tool={call.tool}
+                              status={call.status}
+                              args={JSON.stringify(call.arguments)}
+                            />
+                          ))}
+                      </div>
+                    )}
                   </article>
                 ))}
               </div>
             )}
-            {busy && (
-              <p role="status" className="mt-4 text-xs text-accent">
-                Working locally…
-              </p>
+            {turnRunning && (
+              <div className="mt-8 space-y-4">
+                {streaming?.text ? (
+                  <StreamingMessage provider={providerLabel} text={streaming.text} />
+                ) : (
+                  <ThinkingBubble label={providerLabel} />
+                )}
+                {runningTool && (
+                  <ToolChip
+                    tool={runningTool.tool}
+                    status={runningTool.status}
+                    args={JSON.stringify(runningTool.arguments)}
+                  />
+                )}
+              </div>
+            )}
+            {failedTurn && (
+              <div className="mt-8">
+                <TurnError
+                  message={failedTurn.detail}
+                  onRetry={
+                    content.trim() || !connected
+                      ? undefined
+                      : () => {
+                          const last = [...messages].reverse().find((m) => m.role === 'user');
+                          if (last) setContent(last.content);
+                        }
+                  }
+                />
+              </div>
             )}
             <div ref={end} />
           </div>
           <div className="shrink-0 px-6 pb-5">
-            <form
-              onSubmit={(event) => {
-                event.preventDefault();
-                void send();
-              }}
-              className="rounded-xl border border-line bg-panel p-4 focus-within:border-accent/50"
+            {/* The beam rides the composer while a turn is live, so the input
+                itself carries the state instead of a separate spinner. */}
+            <BorderBeam
+              size="line"
+              colorVariant="mono"
+              strength={0.55}
+              active={turnRunning}
+              theme="dark"
+              className="rounded-xl"
             >
-              <label htmlFor="composer" className="sr-only">
-                Message {runtime?.providerLabel ?? 'Demo agent'}
-              </label>
-              <textarea
-                id="composer"
-                value={content}
-                onChange={(e) => setContent(e.target.value)}
-                maxLength={4000}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    if (!busy && connected) void send();
-                  }
+              <form
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void send();
                 }}
-                placeholder="What are we working on?"
-                rows={2}
-                className="w-full resize-none bg-transparent text-sm leading-6 placeholder:text-muted/60 focus-visible:ring-0"
-              />
-              <div className="mt-3 flex items-center justify-between">
-                <span className="flex items-center gap-2 text-[10px] text-muted">
-                  <Icon kind="spark" />
-                  {runtime?.providerLabel ?? 'Demo agent'} ·{' '}
-                  {runtime?.providerLive ? 'Live model' : 'Local only'}
-                  <span className="mx-1 text-line">|</span>
-                  {mode === 'ask' ? 'Read-only session' : 'Changes need approval'}
-                </span>
-                {busy ? (
-                  <button
-                    type="button"
-                    onClick={() => void run((api) => api.cancel({}))}
-                    className={smallButton}
-                  >
-                    Cancel
-                  </button>
-                ) : (
-                  <button
-                    aria-label="Send message"
-                    disabled={!content.trim() || !connected}
-                    className="rounded-lg bg-accent p-2 text-ink"
-                  >
-                    <Icon kind="arrow" />
-                  </button>
-                )}
-              </div>
-            </form>
+                className="rounded-xl border border-line bg-panel p-4 focus-within:border-accent/50"
+              >
+                <label htmlFor="composer" className="sr-only">
+                  Message {runtime?.providerLabel ?? 'Demo agent'}
+                </label>
+                <textarea
+                  id="composer"
+                  value={content}
+                  onChange={(e) => setContent(e.target.value)}
+                  maxLength={4000}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      if (!busy && connected) void send();
+                    }
+                  }}
+                  placeholder="What are we working on?"
+                  rows={2}
+                  className="w-full resize-none bg-transparent text-sm leading-6 placeholder:text-muted/60 focus-visible:ring-0"
+                />
+                <div className="mt-3 flex items-center justify-between">
+                  <span className="flex items-center gap-2 text-[10px] text-muted">
+                    <Icon kind="spark" />
+                    {runtime?.providerLabel ?? 'Demo agent'} ·{' '}
+                    {runtime?.providerLive ? 'Live model' : 'Local only'}
+                    <span className="mx-1 text-line">|</span>
+                    {mode === 'ask' ? 'Read-only session' : 'Changes need approval'}
+                  </span>
+                  {turnRunning ? (
+                    <button
+                      type="button"
+                      onClick={() => void run((api) => api.cancel({}))}
+                      className={`${smallButton} flex items-center gap-2`}
+                    >
+                      <span className="h-2 w-2 rounded-sm bg-warm" />
+                      Stop
+                    </button>
+                  ) : (
+                    <button
+                      aria-label="Send message"
+                      disabled={!content.trim() || !connected}
+                      className="rounded-lg bg-accent p-2 text-ink"
+                    >
+                      <Icon kind="arrow" />
+                    </button>
+                  )}
+                </div>
+              </form>
+            </BorderBeam>
             <p className="mt-2 text-center text-[9px] text-muted/60">
               {runtime?.providerLive
                 ? `${runtime.providerLabel} responses come from a live model.`

@@ -14,6 +14,7 @@ import {
   type Control,
   type RuntimeState,
   type Activity,
+  type StreamChunk,
 } from '@orchestrai/shared-types';
 
 export class DatabaseService {
@@ -181,6 +182,7 @@ export class RuntimeService {
     private db: DatabaseService,
     private onFailure: (error: string) => void,
     private onActivity: (activity: Activity) => void,
+    private onStream: (chunk: StreamChunk | null) => void,
     private log: (event: string, detail: string) => void,
   ) {}
   async start() {
@@ -204,6 +206,7 @@ export class RuntimeService {
         if (message.error) request.reject(new Error(message.error));
         else request.resolve(message.value);
       }
+      if (message.kind === 'stream') this.onStream(message.chunk.done ? null : message.chunk);
       if (message.kind === 'store')
         void this.db.execute(message.command).then(
           (value) => {

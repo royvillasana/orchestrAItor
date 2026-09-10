@@ -242,12 +242,17 @@ export const runtimeStateSchema = z
   })
   .strict();
 export type RuntimeState = z.infer<typeof runtimeStateSchema>;
+export const streamSchema = z
+  .object({ conversationId: idSchema, text: z.string().max(16000), done: z.boolean() })
+  .strict();
+export type StreamChunk = z.infer<typeof streamSchema>;
 export const snapshotSchema = z
   .object({
     runtime: runtimeStateSchema.nullable(),
     midi: midiStatusSchema.nullable(),
     library: sampleLibrarySchema,
     indexing: z.string().max(300).nullable(),
+    streaming: streamSchema.nullable(),
     samples: z.array(indexedSampleSchema).max(50),
     agents: z.array(agentSchema),
     history: historySchema,
@@ -309,6 +314,9 @@ export const storeCommandSchema = z.discriminatedUnion('type', [
 export type StoreCommand = z.infer<typeof storeCommandSchema>;
 export const wireSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('control'), id: idSchema, command: controlSchema }).strict(),
+  // Assistant text as it arrives. It is display state only: the persisted
+  // message is still written once, when the turn finishes.
+  z.object({ kind: z.literal('stream'), chunk: streamSchema }).strict(),
   z.object({ kind: z.literal('store'), id: idSchema, command: storeCommandSchema }).strict(),
   z
     .object({

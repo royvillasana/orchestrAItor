@@ -22,3 +22,14 @@ export const untilSnapshot = (page, select, predicate, options) =>
     (snapshot) => predicate(select(snapshot)),
     options,
   ).then(select);
+
+/** Polls a locator's own enabled state, which no single snapshot can promise. */
+export async function untilEnabled(locator, { timeout = 20000, label = 'control' } = {}) {
+  const deadline = Date.now() + timeout;
+  for (;;) {
+    await locator.waitFor({ timeout: Math.max(1000, deadline - Date.now()) });
+    if (!(await locator.isDisabled())) return;
+    if (Date.now() > deadline) throw new Error(`Timed out waiting for ${label} to become enabled`);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+}

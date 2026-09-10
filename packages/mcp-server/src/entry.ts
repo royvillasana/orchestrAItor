@@ -112,6 +112,12 @@ const channel = new AgentToolChannel({
   },
 });
 let agentConversationId = '';
+let streamed = '';
+/** Display-only: the persisted message is still written once, at turn end. */
+function emit(chunk: { conversationId: string; text: string; done: boolean }) {
+  if (!process.send || !chunk.conversationId) return;
+  process.send({ kind: 'stream', chunk });
+}
 async function executablesById(): Promise<Partial<Record<ProviderId, string>>> {
   const discovered = await discoverAgents();
   const find = (id: string) =>
@@ -134,6 +140,10 @@ async function useProvider(id: ProviderId) {
       id,
       name: providerNames[id],
       executable,
+      onDelta: (text) => {
+        streamed += (streamed ? '\n\n' : '') + text;
+        emit({ conversationId: agentConversationId, text: streamed, done: false });
+      },
       proxyEntry: path.join(path.dirname(process.argv[1]), 'agent-mcp.cjs'),
       nodeExecutable: process.execPath,
       channelAddress: channel.address,
@@ -232,6 +242,7 @@ async function control(command: Control): Promise<unknown> {
         );
         if (!conversation) throw new Error('Conversation not found.');
         agentConversationId = conversation.id;
+        streamed = '';
         const response = await active.sendMessage(
           {
             ...conversation,
@@ -262,6 +273,9 @@ async function control(command: Control): Promise<unknown> {
         return null;
       } finally {
         chatting = false;
+        // The turn is over however it ended; the transcript owns the text now.
+        emit({ conversationId: agentConversationId, text: streamed, done: true });
+        streamed = '';
       }
     }
   }

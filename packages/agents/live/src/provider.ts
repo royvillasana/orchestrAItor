@@ -41,6 +41,8 @@ export interface LiveAgentOptions {
   channelAddress: string;
   channelToken: string;
   model?: string;
+  /** Assistant text as the CLI emits it, for live display. */
+  onDelta?: (text: string) => void;
   log?: (event: string, detail: string) => void;
   spawnProcess?: typeof spawn;
 }
@@ -51,7 +53,11 @@ interface TurnEvents {
   error: string | null;
 }
 /** Parses one line of a CLI's event stream; unknown shapes are ignored. */
-export function readClaudeEvent(line: string, events: TurnEvents) {
+export function readClaudeEvent(
+  line: string,
+  events: TurnEvents,
+  onDelta?: (text: string) => void,
+) {
   const parsed = JSON.parse(line) as Record<string, unknown>;
   const type = parsed.type;
   if (type === 'system' && typeof parsed.model === 'string') events.model = parsed.model;
@@ -60,8 +66,10 @@ export function readClaudeEvent(line: string, events: TurnEvents) {
     if (typeof message?.model === 'string') events.model = message.model;
     for (const block of Array.isArray(message?.content) ? message.content : []) {
       const item = block as { type?: string; text?: string; name?: string; input?: unknown };
-      if (item.type === 'text' && typeof item.text === 'string' && type === 'assistant')
+      if (item.type === 'text' && typeof item.text === 'string' && type === 'assistant') {
         events.text.push(item.text);
+        onDelta?.(item.text);
+      }
       if (item.type === 'tool_use' && typeof item.name === 'string')
         events.toolCalls.push({ name: item.name, input: item.input });
     }
@@ -74,12 +82,14 @@ export function readClaudeEvent(line: string, events: TurnEvents) {
       events.text.push(parsed.result);
   }
 }
-export function readCodexEvent(line: string, events: TurnEvents) {
+export function readCodexEvent(line: string, events: TurnEvents, onDelta?: (text: string) => void) {
   const parsed = JSON.parse(line) as Record<string, unknown>;
   const message = (parsed.msg ?? parsed) as Record<string, unknown>;
   const type = message.type;
-  if (type === 'agent_message' && typeof message.message === 'string')
+  if (type === 'agent_message' && typeof message.message === 'string') {
     events.text.push(message.message);
+    onDelta?.(message.message);
+  }
   if (type === 'mcp_tool_call_begin' || type === 'mcp_tool_call') {
     const invocation = message.invocation as { tool?: unknown; arguments?: unknown } | undefined;
     if (typeof invocation?.tool === 'string')
@@ -204,7 +214,7 @@ export class LiveAgentProvider implements AgentProvider {
         buffer = buffer.slice(index + 1);
         if (!line) continue;
         try {
-          read(line, events);
+          read(line, events, this.options.onDelta);
         } catch {
           // A line this build does not understand is not a reason to fail a turn.
           this.log('agent.unparsed_event', line.slice(0, 200));

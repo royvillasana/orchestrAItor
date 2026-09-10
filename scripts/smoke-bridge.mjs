@@ -13,7 +13,7 @@ import path from 'node:path';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { startCubasePeer } from './cubase-peer.mjs';
-import { until } from './until.mjs';
+import { until, untilEnabled } from './until.mjs';
 
 const require_ = createRequire(import.meta.url);
 try {
@@ -56,6 +56,9 @@ try {
     { timeout: 15000, label: 'the bridge ports to be detected' },
   );
   const bridge = page.getByRole('radio', { name: /Cubase . Live bridge/ });
+  // The renderer polls, so main-process state is not yet state on screen, and a
+  // detection refresh in flight disables controls meanwhile. Poll the control.
+  await untilEnabled(bridge, { label: 'the bridge option' });
   assert.equal(await bridge.isDisabled(), false, 'The bridge must be selectable with a backend.');
   await bridge.click();
   await page.getByRole('button', { name: 'Connect live session' }).click();

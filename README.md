@@ -57,6 +57,8 @@ packages/
 
 Electron main uses an MCP client over private stdio to reach the runtime. The child owns the demo provider, permission engine, and mock adapter. Desktop transport and demo chat enter the same orchestrator path. A separate validated process channel carries application control, user approval decisions, and persistence acknowledgements; no agent-visible tool can grant its own approval.
 
+The chat surface shows what a turn is actually doing: a shimmer placeholder until the first token, the reply streaming in as the CLI emits it, tool calls as chips beside the message that caused them, a failure with its reason and a retry, and a Stop control while the turn runs. Streaming is display state only — the message is still persisted once, when the turn ends — so a crash mid-turn cannot leave half a reply in history. The composer carries an animated border (`border-beam`) that runs only while a turn is live.
+
 Agent replies are rendered from a small Markdown subset — emphasis, inline code, fenced code, headings, and lists — built as React nodes. Model output is untrusted text, so nothing is ever injected as HTML.
 
 The renderer has context isolation and sandbox enabled, Node integration disabled, an allowlisted preload API, frame/origin checks, and restricted navigation. Production CSP hashes the inline hydration scripts in the exported HTML. Privileged work uses typed IPC only. The application protocol rejects traversal and symlink escapes outside the export directory.
