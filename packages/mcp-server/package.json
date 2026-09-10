@@ -1,0 +1,15 @@
+{
+  "name": "@orchestrai/mcp-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "@orchestrai/shared-types": "workspace:*",
+    "@orchestrai/agent-core": "workspace:*",
+    "@orchestrai/orchestrator": "workspace:*",
+    "@orchestrai/cubase": "workspace:*",
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "zod": "3.25.76"
+  }
+}

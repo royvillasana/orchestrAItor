@@ -1,0 +1,11 @@
+{
+  "name": "@orchestrai/orchestrator",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "@orchestrai/shared-types": "workspace:*",
+    "zod": "3.25.76"
+  }
+}

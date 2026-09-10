@@ -1,0 +1,9 @@
+packages:
+  - apps/*
+  - packages/*
+  - packages/agents/*
+  - packages/adapters/*
+onlyBuiltDependencies:
+  - electron
+  - esbuild
+  - sharp

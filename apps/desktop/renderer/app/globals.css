@@ -1,0 +1,33 @@
+@import 'tailwindcss';
+
+@theme {
+  --color-ink: #101214;
+  --color-panel: #171a1d;
+  --color-raised: #202428;
+  --color-line: #2c3237;
+  --color-muted: #9aa4ac;
+  --color-paper: #edf0ed;
+  --color-accent: #c8ed9c;
+  --color-warm: #e7b987;
+  --font-sans: 'Arial', 'Helvetica Neue', sans-serif;
+  --font-mono: 'SFMono-Regular', Consolas, monospace;
+}
+
+@layer base {
+  body {
+    @apply bg-ink text-paper antialiased;
+  }
+  button,
+  a,
+  input,
+  textarea,
+  select {
+    @apply outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-ink;
+  }
+  button {
+    @apply cursor-pointer disabled:cursor-not-allowed disabled:opacity-40;
+  }
+  ::selection {
+    @apply bg-accent text-ink;
+  }
+}

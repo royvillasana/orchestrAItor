@@ -1,0 +1,25 @@
+{
+  "name": "@orchestrai/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/main.cjs",
+  "scripts": {
+    "build:renderer": "next build renderer",
+    "dev:renderer": "next dev renderer --hostname 127.0.0.1 --port 3210"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "@orchestrai/cli": "workspace:*",
+    "@orchestrai/mcp-server": "workspace:*",
+    "@orchestrai/shared-types": "workspace:*",
+    "@tailwindcss/postcss": "4.3.3",
+    "next": "16.3.4",
+    "postcss": "8.5.28",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "sql.js": "1.14.2",
+    "tailwindcss": "4.3.3",
+    "zod": "3.25.76"
+  }
+}

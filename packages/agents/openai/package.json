@@ -1,0 +1,12 @@
+{
+  "name": "@orchestrai/openai",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "@orchestrai/shared-types": "workspace:*",
+    "@orchestrai/agent-core": "workspace:*",
+    "zod": "3.25.76"
+  }
+}
