@@ -17,4 +17,14 @@ export interface CubasePeer {
   reportTempo(bpm: number): void;
   stop(): void;
 }
-export function startCubasePeer(options?: { tempo?: number }): Promise<CubasePeer>;
+export interface CubasePeerTrack {
+  name: string;
+  volume: number;
+  mute: boolean;
+  solo: boolean;
+}
+export const DEFAULT_TRACKS: CubasePeerTrack[];
+export function startCubasePeer(options?: {
+  tempo?: number;
+  tracks?: CubasePeerTrack[];
+}): Promise<CubasePeer>;

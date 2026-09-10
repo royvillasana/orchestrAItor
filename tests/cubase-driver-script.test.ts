@@ -7,7 +7,16 @@ import { decodeFrame, encodeFrame } from '../packages/adapters/cubase/src';
 
 const require_ = createRequire(import.meta.url);
 type SysexHandler = (device: unknown, sysex: number[]) => void;
+interface StubChannel {
+  mValue: {
+    mVolume: { mOnProcessValueChange: (d: unknown, m: unknown, v: number) => void };
+    mMute: { mOnProcessValueChange: (d: unknown, m: unknown, v: number) => void };
+    mSolo: { mOnProcessValueChange: (d: unknown, m: unknown, v: number) => void };
+  };
+  mOnTitleChange: (d: unknown, m: unknown, title: string) => void;
+}
 interface StubDriver {
+  _channels: StubChannel[];
   _input: { name: string; mOnSysex: SysexHandler };
   _output: { name: string };
   _page: {
@@ -72,9 +81,12 @@ describe('driver script inside a Cubase-shaped host', () => {
     expect(api.log[0]).toMatchObject({ call: 'makeDeviceDriver', vendor: 'OrchestrAI' });
     expect(api.driver._input.name).toContain('OrchestrAI Bridge');
     expect(api.driver._output.name).toContain('OrchestrAI Bridge');
-    // Host values expose only increment/decrement, so transport must be driven
-    // through bound surface values rather than written directly.
-    expect(api.log.filter((entry) => entry.call === 'makeValueBinding')).toHaveLength(2);
+    // Host values expose only increment/decrement, so transport and mixer
+    // values must be driven through bound surface values.
+    const bindings = api.log.filter((entry) => entry.call === 'makeValueBinding');
+    expect(bindings.filter((entry) => /^bridge/.test(String(entry.surfaceValue)))).toHaveLength(2);
+    // One bank of sixteen channels, each with volume, mute, and solo.
+    expect(bindings.filter((entry) => /^track/.test(String(entry.surfaceValue)))).toHaveLength(48);
     expect(typeof api.driver._input.mOnSysex).toBe('function');
   });
   it('answers a handshake over SysEx', () => {
@@ -127,6 +139,63 @@ describe('driver script inside a Cubase-shaped host', () => {
     expect(presses.map((entry) => entry.value)).toEqual([1, 0]);
     expect(presses[0]).toMatchObject({ name: 'bridgeStart' });
     expect(lastResponse(api)).toMatchObject({ ok: true, result: { project: { playing: true } } });
+  });
+  it('reports only the channels Cubase has filled, named as Cubase names them', () => {
+    const device = { id: 'device' };
+    const channels = api.driver._channels;
+    // Cubase fills two channels of the bank and leaves the rest empty.
+    channels[0].mOnTitleChange(device, {}, 'Kick');
+    channels[0].mValue.mVolume.mOnProcessValueChange(device, {}, 0.82);
+    channels[1].mOnTitleChange(device, {}, 'Sub bass');
+    channels[1].mValue.mVolume.mOnProcessValueChange(device, {}, 0.6);
+    channels[1].mValue.mMute.mOnProcessValueChange(device, {}, 1);
+    api.driver._input.mOnSysex(device, request(20, { op: 'get_state' }));
+    const project = (
+      lastResponse(api) as { result: { project: { tracks: unknown[]; tracksTruncated: boolean } } }
+    ).result.project;
+    expect(project.tracks).toEqual([
+      { id: 'track-0', name: 'Kick', type: 'audio', mute: false, solo: false, volume: 0.82 },
+      { id: 'track-1', name: 'Sub bass', type: 'audio', mute: true, solo: false, volume: 0.6 },
+    ]);
+    expect(project.tracksTruncated).toBe(false);
+  });
+  it('follows a fader the producer moved in Cubase rather than what it last wrote', () => {
+    const device = { id: 'device' };
+    api.driver._channels[0].mValue.mVolume.mOnProcessValueChange(device, {}, 0.31);
+    api.driver._input.mOnSysex(device, request(21, { op: 'get_state' }));
+    const project = (lastResponse(api) as { result: { project: { tracks: { volume: number }[] } } })
+      .result.project;
+    expect(project.tracks[0].volume).toBe(0.31);
+  });
+  it('writes a track level through its bound surface value', () => {
+    api.log.length = 0;
+    api.driver._input.mOnSysex(
+      { id: 'device' },
+      request(22, {
+        op: 'execute',
+        tool: 'track.set_volume',
+        arguments: { trackId: 'track-0', volume: 0.5 },
+      }),
+    );
+    const write = [...api.log].reverse().find((entry) => entry.call === 'setProcessValue');
+    expect(write).toMatchObject({ name: 'trackVolume0', value: 0.5 });
+    expect(lastResponse(api)).toMatchObject({ ok: true });
+  });
+  it('refuses a track the session does not have before sending anything', () => {
+    api.log.length = 0;
+    api.driver._input.mOnSysex(
+      { id: 'device' },
+      request(23, {
+        op: 'execute',
+        tool: 'track.set_mute',
+        arguments: { trackId: 'track-9', mute: true },
+      }),
+    );
+    expect(lastResponse(api)).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('no track'),
+    });
+    expect(api.log.some((entry) => entry.call === 'setProcessValue')).toBe(false);
   });
   it('rejects an unsupported operation and a malformed payload', () => {
     api.driver._input.mOnSysex(

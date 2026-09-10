@@ -15,9 +15,15 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 const require_ = createRequire(import.meta.url);
+/** What a small session looks like once Cubase has filled the bank. */
+export const DEFAULT_TRACKS = [
+  { name: 'Kick', volume: 0.82, mute: false, solo: false },
+  { name: 'Sub bass', volume: 0.6, mute: false, solo: false },
+  { name: 'Analog keys', volume: 0.55, mute: true, solo: false },
+];
 const PORT_NAME = process.env.ORCHESTRA_PEER_PORT ?? 'OrchestrAI Bridge';
 
-export async function startCubasePeer({ tempo = 120 } = {}) {
+export async function startCubasePeer({ tempo = 120, tracks = DEFAULT_TRACKS } = {}) {
   const midi = require_('@julusian/midi');
   const { makeApi } = require_('../tests/fixtures/midiremote-api-stub.cjs');
   const api = makeApi();
@@ -54,6 +60,16 @@ export async function startCubasePeer({ tempo = 120 } = {}) {
   api.driver._page.mOnActivate(device, mapping);
   const transport = api.driver._page.mHostAccess.mTransport;
   transport.mTimeDisplay.mOnChangeTempoBPM(device, mapping, tempo);
+  // Cubase filling the first channels of the bank, as it would on a real project.
+  const channels = api.driver._channels ?? [];
+  tracks.forEach((track, index) => {
+    const channel = channels[index];
+    if (!channel) return;
+    channel.mOnTitleChange(device, mapping, track.name);
+    channel.mValue.mVolume.mOnProcessValueChange(device, mapping, track.volume);
+    channel.mValue.mMute.mOnProcessValueChange(device, mapping, track.mute ? 1 : 0);
+    channel.mValue.mSolo.mOnProcessValueChange(device, mapping, track.solo ? 1 : 0);
+  });
 
   const sent = [];
   api.driver._output.sendMidi = (_device, message) => {

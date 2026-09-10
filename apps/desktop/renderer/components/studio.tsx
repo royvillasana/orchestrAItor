@@ -674,21 +674,45 @@ export function Studio({ setup = false }: { setup?: boolean }) {
             <p className="mb-3 px-2 text-[10px] font-semibold tracking-[0.16em] text-muted">
               TRACKS <span className="float-right">{project?.tracks.length ?? 0}</span>
             </p>
+            {connected && project?.tracks.length === 0 && (
+              <p className="px-2 text-[10px] leading-4 text-muted/60">
+                This session has no tracks yet.
+              </p>
+            )}
             {project?.tracks.map((track, i) => (
-              <div
-                key={track.id}
-                className="mb-1 flex items-center gap-3 rounded-lg px-2 py-3 text-sm"
-              >
-                <span
-                  className={`h-7 w-0.5 rounded ${['bg-warm', 'bg-accent', 'bg-sky-300', 'bg-violet-300'][i % 4]}`}
-                />
-                <Icon kind={track.type === 'audio' ? 'wave' : 'settings'} className="text-muted" />
-                <span>{track.name}</span>
-                <span className="ml-auto font-mono text-[9px] text-muted">
-                  {String(i + 1).padStart(2, '0')}
-                </span>
+              <div key={track.id} className="mb-1 rounded-lg px-2 py-2 text-sm">
+                <div className="flex items-center gap-3">
+                  <span
+                    className={`h-7 w-0.5 rounded ${['bg-warm', 'bg-accent', 'bg-sky-300', 'bg-violet-300'][i % 4]}`}
+                  />
+                  <Icon
+                    kind={track.type === 'audio' ? 'wave' : 'settings'}
+                    className="text-muted"
+                  />
+                  <span className={`truncate ${track.mute ? 'text-muted line-through' : ''}`}>
+                    {track.name}
+                  </span>
+                  <span className="ml-auto flex shrink-0 items-center gap-1 font-mono text-[9px]">
+                    {track.solo && <span className="text-warm">S</span>}
+                    {track.mute && <span className="text-muted">M</span>}
+                    {/* The fader position the DAW reports, shown as a percentage
+                        rather than a decibel figure this project would invent. */}
+                    <span className="text-muted">{Math.round(track.volume * 100)}%</span>
+                  </span>
+                </div>
+                <div className="ml-6 mt-1.5 h-0.5 rounded bg-line">
+                  <div
+                    className={`h-0.5 rounded ${track.mute ? 'bg-line' : 'bg-accent/60'}`}
+                    style={{ width: `${Math.round(track.volume * 100)}%` }}
+                  />
+                </div>
               </div>
             ))}
+            {project?.tracksTruncated && (
+              <p className="mt-2 px-2 text-[9px] leading-4 text-muted/60">
+                Showing the first bank of channels; this project may have more.
+              </p>
+            )}
           </div>
           <div className="mx-5 border-t border-line" />
           <div className="flex min-h-0 flex-1 flex-col px-3 py-5">

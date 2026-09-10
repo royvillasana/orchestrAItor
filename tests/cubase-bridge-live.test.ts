@@ -4,7 +4,7 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseService, RuntimeService } from '../apps/desktop/electron/services';
-import { activitySchema, runtimeStateSchema } from '../packages/shared-types/src';
+import { activitySchema, historySchema, runtimeStateSchema } from '../packages/shared-types/src';
 import { startCubasePeer } from '../scripts/cubase-peer.mjs';
 
 const require_ = createRequire(import.meta.url);
@@ -104,6 +104,61 @@ describe.skipIf(!backendPresent)('live bridge over real MIDI', () => {
     const state = await runtime.state();
     expect(state.project?.tempo).toBe(124);
     expect(state.project?.mock).toBe(false);
+  }, 30000);
+
+  it('reads the session tracks over real MIDI', async () => {
+    const state = await runtime.state();
+    expect(state.project?.tracks.map((track) => track.name)).toEqual([
+      'Kick',
+      'Sub bass',
+      'Analog keys',
+    ]);
+    expect(state.project?.tracks[0]).toMatchObject({ volume: 0.82, mute: false });
+    // Mute state comes from the host callback, not from what the script wrote.
+    expect(state.project?.tracks[2]).toMatchObject({ mute: true });
+    expect(state.project?.tracksTruncated).toBe(false);
+  }, 30000);
+
+  it('applies an approved track write to the named track and no other', async () => {
+    const before = (await runtime.state()).project!.tracks;
+    const raw = await runtime.call(
+      'track.set_volume',
+      { trackId: 'track-1', volume: 0.25 },
+      'live',
+    );
+    const activity = activitySchema.parse(
+      JSON.parse((raw.content as { type: string; text: string }[])[0].text),
+    );
+    expect(activity.status).toBe('awaiting-approval');
+    expect((await runtime.state()).project?.tracks[1].volume).toBe(before[1].volume);
+
+    await runtime.control({
+      type: 'decision',
+      decision: { id: activity.id, sessionId: activity.sessionId, approve: true },
+    });
+    const call = [...peerLog()].reverse().find((entry) => entry.call === 'setProcessValue');
+    expect(call).toMatchObject({ name: 'trackVolume1', value: 0.25 });
+    const after = (await runtime.state()).project!.tracks;
+    expect(after[1].volume).toBe(0.25);
+    // The other tracks are untouched.
+    expect(after[0].volume).toBe(before[0].volume);
+    expect(after[2].volume).toBe(before[2].volume);
+  }, 30000);
+
+  it('refuses a write naming a track the session does not have', async () => {
+    const raw = await runtime.call('track.set_mute', { trackId: 'track-12', mute: true }, 'live');
+    const activity = activitySchema.parse(
+      JSON.parse((raw.content as { type: string; text: string }[])[0].text),
+    );
+    await runtime.control({
+      type: 'decision',
+      decision: { id: activity.id, sessionId: activity.sessionId, approve: true },
+    });
+    const settled = historySchema
+      .parse(await db.execute({ type: 'history' }))
+      .activities.find((candidate) => candidate.id === activity.id);
+    expect(settled?.status).toBe('failed');
+    expect(settled?.detail).toMatch(/no track/);
   }, 30000);
 
   it('drives transport through the bound surface value and survives disconnect', async () => {

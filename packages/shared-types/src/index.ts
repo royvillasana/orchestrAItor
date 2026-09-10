@@ -107,13 +107,18 @@ export const projectSchema = z
         .object({
           id: idSchema,
           name: z.string(),
-          type: z.enum(['audio', 'midi', 'instrument']),
+          type: z.enum(['audio', 'midi', 'instrument', 'group', 'fx']),
           mute: z.boolean(),
           solo: z.boolean(),
-          volume: z.number(),
+          // The fader position the DAW reports, not decibels: converting would
+          // mean guessing at Steinberg's taper, and a wrong dB figure reads as
+          // authoritative in a way a normalized one does not.
+          volume: z.number().min(0).max(1),
         })
         .strict(),
     ),
+    /** True when the session has more channels than the reported bank covers. */
+    tracksTruncated: z.boolean().optional(),
   })
   .strict();
 export type ProjectState = z.infer<typeof projectSchema>;
@@ -123,6 +128,9 @@ export const toolNames = [
   'project.set_tempo',
   'transport.play',
   'transport.stop',
+  'track.set_volume',
+  'track.set_mute',
+  'track.set_solo',
   'samples.search',
   'samples.stats',
   'midi.create_clip',
@@ -151,6 +159,9 @@ export const toolSchemas = {
   'project.set_tempo': z.object({ tempo: tempoSchema }).strict(),
   'transport.play': emptySchema,
   'transport.stop': emptySchema,
+  'track.set_volume': z.object({ trackId: idSchema, volume: z.number().min(0).max(1) }).strict(),
+  'track.set_mute': z.object({ trackId: idSchema, mute: z.boolean() }).strict(),
+  'track.set_solo': z.object({ trackId: idSchema, solo: z.boolean() }).strict(),
   'samples.search': z
     .object({
       query: z.string().trim().min(1).max(120),

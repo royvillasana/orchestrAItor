@@ -22,7 +22,15 @@ var OPERATIONS = [
   'project.set_tempo',
   'transport.play',
   'transport.stop',
+  'track.set_volume',
+  'track.set_mute',
+  'track.set_solo',
 ];
+//! A bank is a window onto the project, not the project. Sixteen covers most
+//! sessions a producer works with conversationally and keeps the SysEx payload
+//! small; a larger session is reported as truncated rather than as though the
+//! list were everything.
+var BANK_SIZE = 16;
 
 function utf8Encode(text) {
   var bytes = [];
@@ -147,6 +155,15 @@ function createHandler(host) {
         if (request.tool === 'project.set_tempo') host.setTempo(request.arguments.tempo);
         if (request.tool === 'transport.play') host.setPlaying(true);
         if (request.tool === 'transport.stop') host.setPlaying(false);
+        if (request.tool.indexOf('track.') === 0) {
+          var field =
+            request.tool === 'track.set_volume'
+              ? 'volume'
+              : request.tool === 'track.set_mute'
+                ? 'mute'
+                : 'solo';
+          host.setTrack(request.arguments.trackId, field, request.arguments[field]);
+        }
         return { ok: true, result: { project: host.readProject() } };
       }
       return { ok: false, error: 'Unknown operation.' };
@@ -185,6 +202,57 @@ if (api) {
   page.makeValueBinding(startValue, transport.mValue.mStart);
   page.makeValueBinding(stopValue, transport.mValue.mStop);
 
+  //! The mixer bank. Cubase fills these channels from the project; the script
+  //! never assumes what is in them, it reports what the host says.
+  var bank = page.mHostAccess.mMixConsole
+    .makeMixerBankZone('OrchestrAI')
+    .includeAudioChannels()
+    .includeInstrumentChannels()
+    .includeMIDIChannels()
+    .includeGroupChannels()
+    .includeFXChannels();
+  var channels = [];
+  for (var index = 0; index < BANK_SIZE; index++) {
+    var channel = bank.makeMixerBankChannel();
+    var volume = deviceDriver.mSurface.makeCustomValueVariable('trackVolume' + index);
+    var mute = deviceDriver.mSurface.makeCustomValueVariable('trackMute' + index);
+    var solo = deviceDriver.mSurface.makeCustomValueVariable('trackSolo' + index);
+    page.makeValueBinding(volume, channel.mValue.mVolume);
+    page.makeValueBinding(mute, channel.mValue.mMute);
+    page.makeValueBinding(solo, channel.mValue.mSolo);
+    var entry = {
+      id: 'track-' + index,
+      name: '',
+      type: 'audio',
+      volume: 0,
+      mute: false,
+      solo: false,
+      present: false,
+      surface: { volume: volume, mute: mute, solo: solo },
+    };
+    channels.push(entry);
+    //! Values come from the host's own callbacks. A script that trusted its own
+    //! writes would drift the moment the producer moved a fader by hand.
+    bindChannel(channel, entry);
+  }
+  function bindChannel(channel, entry) {
+    channel.mOnTitleChange = function (activeDevice, activeMapping, title) {
+      entry.name = title || '';
+      entry.present = !!title;
+      session.revision++;
+    };
+    channel.mValue.mVolume.mOnProcessValueChange = function (device, mapping, value) {
+      entry.volume = value;
+      entry.present = true;
+    };
+    channel.mValue.mMute.mOnProcessValueChange = function (device, mapping, value) {
+      entry.mute = value >= 0.5;
+    };
+    channel.mValue.mSolo.mOnProcessValueChange = function (device, mapping, value) {
+      entry.solo = value >= 0.5;
+    };
+  }
+
   // Project state is what Cubase last reported, never what this script assumed:
   // tempo and transport arrive through host callbacks.
   var session = { device: null, mapping: null, tempo: 120, playing: false, revision: 0 };
@@ -214,6 +282,19 @@ if (api) {
       return 'Cubase (MIDI Remote)';
     },
     readProject: function () {
+      var tracks = [];
+      for (var index = 0; index < channels.length; index++) {
+        var entry = channels[index];
+        if (!entry.present) continue;
+        tracks.push({
+          id: entry.id,
+          name: entry.name || 'Channel ' + (index + 1),
+          type: entry.type,
+          mute: entry.mute,
+          solo: entry.solo,
+          volume: Math.max(0, Math.min(1, entry.volume)),
+        });
+      }
       return {
         name: 'Cubase session',
         tempo: session.tempo,
@@ -222,8 +303,27 @@ if (api) {
         playing: session.playing,
         revision: session.revision,
         mock: false,
-        tracks: [],
+        tracks: tracks,
+        // Every channel reported means the project may hold more than the bank.
+        tracksTruncated: tracks.length >= BANK_SIZE,
       };
+    },
+    setTrack: function (trackId, field, value) {
+      requireSession();
+      var entry = null;
+      for (var index = 0; index < channels.length; index++)
+        if (channels[index].id === trackId && channels[index].present) entry = channels[index];
+      if (!entry) throw new Error('This session has no track "' + trackId + '".');
+      var surfaceValue =
+        field === 'volume'
+          ? entry.surface.volume
+          : field === 'mute'
+            ? entry.surface.mute
+            : entry.surface.solo;
+      var numeric = field === 'volume' ? value : value ? 1 : 0;
+      surfaceValue.setProcessValue(session.device, numeric);
+      entry[field] = field === 'volume' ? numeric : numeric >= 0.5;
+      session.revision++;
     },
     setTempo: function (tempo) {
       requireSession();

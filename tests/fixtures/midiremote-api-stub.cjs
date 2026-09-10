@@ -44,9 +44,33 @@ function makeApi() {
             setTempoBPM: (mapping, bpm) => log.push({ call: 'setTempoBPM', mapping, bpm }),
           },
         };
+        const makeHostValue = () => ({ mOnProcessValueChange: null });
+        const channels = [];
+        const bankZone = {
+          makeMixerBankChannel: () => {
+            const channel = {
+              mValue: { mVolume: makeHostValue(), mMute: makeHostValue(), mSolo: makeHostValue() },
+              mOnTitleChange: null,
+            };
+            channels.push(channel);
+            return channel;
+          },
+        };
+        for (const include of [
+          'includeAudioChannels',
+          'includeInstrumentChannels',
+          'includeMIDIChannels',
+          'includeGroupChannels',
+          'includeFXChannels',
+        ])
+          bankZone[include] = () => bankZone;
+        driver._channels = channels;
         return (driver._page = {
           name,
-          mHostAccess: { mTransport: transport },
+          mHostAccess: {
+            mTransport: transport,
+            mMixConsole: { makeMixerBankZone: () => bankZone },
+          },
           makeValueBinding: (surfaceValue, hostValue) =>
             log.push({ call: 'makeValueBinding', surfaceValue: surfaceValue.name, hostValue }),
           mOnActivate: null,

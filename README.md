@@ -106,6 +106,14 @@ The handshake completes as soon as the script answers, and the header then shows
 
 The MIDI backend is an **optional** dependency, deliberately not installed by default, so `pnpm install` still never triggers an Electron native rebuild. Without it the bridge reports itself unavailable with the install command, and the mock stays fully usable. Install it with `pnpm add -w -D @julusian/midi`.
 
+### Tracks
+
+A connected session reports its channels — name, level, mute, solo — read from Cubase's own callbacks rather than from what the driver script last wrote, so a fader moved by hand in Cubase is reflected rather than overwritten. `track.set_volume`, `track.set_mute`, and `track.set_solo` address one track by id, take the same approval as any other write, and are refused before anything is sent if the named track is not in the reported state.
+
+**Volume is the fader position, 0 to 1, not decibels.** Converting would mean reproducing Steinberg's fader taper, which this project would be guessing at, and a wrong decibel figure reads as authoritative in a way an honest normalized one does not. The interface shows a percentage; Cubase shows the decibels, correctly.
+
+The bank covers the first 16 channels of audio, instrument, MIDI, group, and FX kinds. A larger session is reported as truncated rather than as though the list were the whole project. Creating, renaming, and reordering tracks, sends, inserts, EQ, and automation remain out of scope.
+
 ### What is verified, and what is not
 
 Three layers of automated coverage, each closer to a real session:
@@ -224,4 +232,4 @@ For development-mode smoke verification, start `pnpm --filter @orchestrai/deskto
 
 ## Next milestones
 
-Audio analysis, and track and mixer awareness from a live session, remain the next milestones. API credential storage, plugin operations, autonomous Agent mode, and token-level streaming into the transcript remain separate integrations. The active implementation checklist is `openspec/changes/add-cubase-midi-bridge/tasks.md`; Milestone 1 is archived under `openspec/changes/archive/`.
+Audio analysis remains the next milestone. API credential storage, plugin operations, autonomous Agent mode, and token-level streaming into the transcript remain separate integrations. The active implementation checklist is `openspec/changes/add-cubase-midi-bridge/tasks.md`; Milestone 1 is archived under `openspec/changes/archive/`.

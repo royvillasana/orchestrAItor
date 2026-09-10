@@ -31,17 +31,17 @@ Every tool invocation SHALL record the agent session that made it, whether it or
 
 ### Requirement: Bound approval lifecycle
 
-Approval SHALL be bound to request, arguments, agent, and session; expire after five minutes; be usable once; and be invalidated by cancellation, disconnect, restart, or mode change. Only the trusted application control channel SHALL submit user approval decisions. Writes SHALL be serialized and revalidated before execution.
+Every write SHALL bind its arguments, session, and agent to a single approval that expires, is consumed once, and is invalidated by cancellation, mode change, disconnect, or restart. A write addressing a single track SHALL bind the track it names, so an approval cannot be applied to a different track.
 
-#### Scenario: Replayed or expired approval
+#### Scenario: Approval names its track
 
-- **WHEN** a caller reuses an approval or submits it after expiry or session change
-- **THEN** no write executes and the activity records the rejection
+- **WHEN** a track volume change is approved
+- **THEN** the change is applied to the track the request named and to no other
 
-#### Scenario: Denied proposal
+#### Scenario: Track disappears before execution
 
-- **WHEN** the user denies or cancels a pending proposal
-- **THEN** it reaches a terminal denied or cancelled state without changing the adapter
+- **WHEN** an approved track write executes after that track is no longer reported
+- **THEN** execution is refused and the outcome is recorded as failed
 
 ### Requirement: Local MCP process
 

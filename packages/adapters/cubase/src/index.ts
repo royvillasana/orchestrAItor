@@ -22,11 +22,12 @@ export const initialProject = (): ProjectState => ({
   playing: false,
   revision: 0,
   mock: true,
+  // Volume is the normalized fader position both adapters now report.
   tracks: [
-    { id: 'kick', name: 'Kick', type: 'audio', mute: false, solo: false, volume: -4.2 },
-    { id: 'bass', name: 'Sub bass', type: 'midi', mute: false, solo: false, volume: -6 },
-    { id: 'percussion', name: 'Percussion', type: 'audio', mute: false, solo: false, volume: -8 },
-    { id: 'keys', name: 'Analog keys', type: 'instrument', mute: false, solo: false, volume: -10 },
+    { id: 'kick', name: 'Kick', type: 'audio', mute: false, solo: false, volume: 0.82 },
+    { id: 'bass', name: 'Sub bass', type: 'midi', mute: false, solo: false, volume: 0.74 },
+    { id: 'percussion', name: 'Percussion', type: 'audio', mute: false, solo: false, volume: 0.66 },
+    { id: 'keys', name: 'Analog keys', type: 'instrument', mute: false, solo: false, volume: 0.58 },
   ],
 });
 export class MockCubaseAdapter implements DawAdapter {
@@ -58,6 +59,19 @@ export class MockCubaseAdapter implements DawAdapter {
   private assertConnected() {
     if (!this.connected) throw new Error('Mock Cubase is disconnected.');
   }
+  private applyTrack(command: DawCommand) {
+    const { trackId } = command.arguments as { trackId: string };
+    const track = this.project.tracks.find((candidate) => candidate.id === trackId);
+    // Refused before anything is applied: a stale conversation must not reach
+    // a track that is no longer there.
+    if (!track) throw new Error(`This session has no track "${trackId}".`);
+    if (command.tool === 'track.set_volume')
+      track.volume = toolSchemas['track.set_volume'].parse(command.arguments).volume;
+    if (command.tool === 'track.set_mute')
+      track.mute = toolSchemas['track.set_mute'].parse(command.arguments).mute;
+    if (command.tool === 'track.set_solo')
+      track.solo = toolSchemas['track.set_solo'].parse(command.arguments).solo;
+  }
   async execute(input: DawCommand) {
     this.assertConnected();
     const command = commandSchema.parse(input);
@@ -66,6 +80,7 @@ export class MockCubaseAdapter implements DawAdapter {
       this.project.tempo = toolSchemas['project.set_tempo'].parse(command.arguments).tempo;
     if (command.tool === 'transport.play') this.project.playing = true;
     if (command.tool === 'transport.stop') this.project.playing = false;
+    if (command.tool.startsWith('track.')) this.applyTrack(command);
     if (!command.tool.includes('.get_')) this.project.revision++;
     return { project: await this.getProjectState() };
   }

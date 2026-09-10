@@ -31,22 +31,17 @@ The mock Cubase adapter SHALL expose its mock identity, deterministic fixture pr
 
 ### Requirement: Stateful bounded mock operations
 
-The mock SHALL support project state read, tempo read/set from 20 through 300 BPM, and transport play/stop. It SHALL advertise plugin control, track creation, and MIDI insertion as unsupported and SHALL report successful outcomes only after state mutation.
+The mock SHALL support project state read, tempo read/set from 20 through 300 BPM, transport play/stop, and per-track volume, mute, and solo, with volume expressed as a normalized fader position from 0 to 1. It SHALL advertise plugin control, track creation, and MIDI insertion as unsupported and SHALL report successful outcomes only after state mutation.
 
-#### Scenario: Tempo round trip
+#### Scenario: Track level round trip
 
-- **WHEN** an approved command sets mock tempo to 124
-- **THEN** subsequent tempo and project-state reads both return 124
+- **WHEN** a track volume is set on the mock
+- **THEN** the mock reports that track at the new normalized level
 
-#### Scenario: Transport round trip
+#### Scenario: Out-of-range level
 
-- **WHEN** approved play and stop commands run sequentially
-- **THEN** state becomes playing and then stopped with matching operation results
-
-#### Scenario: Unsupported plugin operation
-
-- **WHEN** plugin insertion is requested
-- **THEN** the adapter returns unsupported and no mock success is fabricated
+- **WHEN** a track volume outside 0 to 1 is requested
+- **THEN** it is refused and no track changes
 
 ### Requirement: Explicit adapter selection
 
