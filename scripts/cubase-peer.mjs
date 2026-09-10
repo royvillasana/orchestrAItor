@@ -1,0 +1,86 @@
+/**
+ * Runs the shipped Cubase driver script outside Cubase, over real CoreMIDI.
+ *
+ * The script is loaded exactly as Cubase loads it — with `midiremote_api_v1`
+ * resolvable — and its MIDI input/output are wired to real virtual MIDI
+ * endpoints named "OrchestrAI Bridge". The desktop bridge then finds and opens
+ * those endpoints like any other port pair.
+ *
+ * This exercises the whole path except Cubase's own handling of the API calls:
+ * real ports, real SysEx bytes on the wire, and the real driver script.
+ */
+import { createRequire } from 'node:module';
+import { mkdtemp, mkdir, copyFile, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+
+const require_ = createRequire(import.meta.url);
+const PORT_NAME = process.env.ORCHESTRA_PEER_PORT ?? 'OrchestrAI Bridge';
+
+export async function startCubasePeer({ tempo = 120 } = {}) {
+  const midi = require_('@julusian/midi');
+  const { makeApi } = require_('../tests/fixtures/midiremote-api-stub.cjs');
+  const api = makeApi();
+
+  const root = await mkdtemp(path.join(tmpdir(), 'orchestrai-peer-'));
+  await copyFile(
+    path.resolve('resources/cubase/orchestrai_bridge.js'),
+    path.join(root, 'script.js'),
+  );
+  await writeFile(path.join(root, 'package.json'), JSON.stringify({ type: 'commonjs' }));
+  const moduleDirectory = path.join(root, 'node_modules', 'midiremote_api_v1');
+  await mkdir(moduleDirectory, { recursive: true });
+  globalThis.__orchestraiApi = api;
+  await writeFile(
+    path.join(moduleDirectory, 'index.js'),
+    'module.exports = globalThis.__orchestraiApi;',
+  );
+  await writeFile(
+    path.join(moduleDirectory, 'package.json'),
+    JSON.stringify({ name: 'midiremote_api_v1', main: 'index.js' }),
+  );
+  require_(path.join(root, 'script.js'));
+
+  // Cubase's own endpoints: a source the bridge reads and a destination it writes.
+  const output = new midi.Output();
+  const input = new midi.Input();
+  output.openVirtualPort(PORT_NAME);
+  input.ignoreTypes(false, true, true);
+  input.openVirtualPort(PORT_NAME);
+
+  const device = { id: 'peer-device' };
+  const mapping = { id: 'peer-mapping' };
+  // Stand in for Cubase activating the mapping page after pairing.
+  api.driver._page.mOnActivate(device, mapping);
+  const transport = api.driver._page.mHostAccess.mTransport;
+  transport.mTimeDisplay.mOnChangeTempoBPM(device, mapping, tempo);
+
+  const sent = [];
+  api.driver._output.sendMidi = (_device, message) => {
+    sent.push(message);
+    output.sendMessage(message);
+  };
+  input.on('message', (_delta, message) => api.driver._input.mOnSysex(device, message));
+
+  return {
+    api,
+    sent,
+    portName: PORT_NAME,
+    /** Cubase's transport reporting back, as it would after a real edit. */
+    reportTempo: (bpm) => transport.mTimeDisplay.mOnChangeTempoBPM(device, mapping, bpm),
+    stop: () => {
+      input.closePort();
+      output.closePort();
+    },
+  };
+}
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+  const peer = await startCubasePeer();
+  console.log(`Cubase peer listening on real MIDI ports named "${peer.portName}". Ctrl-C to stop.`);
+  process.on('SIGINT', () => {
+    peer.stop();
+    process.exit(0);
+  });
+  setInterval(() => {}, 1 << 30);
+}

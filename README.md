@@ -104,9 +104,15 @@ The MIDI backend is an **optional** dependency, deliberately not installed by de
 
 ### What is verified, and what is not
 
-Automated tests exercise the real protocol end to end over an in-process loopback against a simulated Cubase peer, assert that the **shipped driver script** encodes and decodes byte-for-byte identically to the host implementation, and load that same script against a stub shaped after Cubase 15's own `midiremote_api_v1` definition — so the Cubase-facing half (device/port registration, transport value bindings, `setTempoBPM`, and the refusal to write before the mapping page is active) is covered too.
+Three layers of automated coverage, each closer to a real session:
 
-What automation still cannot cover is Cubase's own interpretation of those calls. To verify manually: follow the setup above, then approve a tempo change and confirm it in Cubase's transport panel. Windows bridge verification is deferred alongside the existing Windows smoke limitation.
+1. **Protocol** — round trips, corrupt/foreign/truncated frames, unmatched correlations, oversized payloads, and timeout-driven disconnect over an in-process loopback. The **shipped driver script** is asserted to encode and decode byte-for-byte identically to the host implementation.
+2. **Driver script** — the shipped script is loaded against a stub shaped after Cubase 15's own `midiremote_api_v1` definition, covering device/port registration, the transport value bindings, `setTempoBPM` with the active mapping, and its refusal to write before Cubase activates the mapping page.
+3. **Live path over real MIDI** (`tests/cubase-bridge-live.test.ts`) — the driver script runs on **real CoreMIDI endpoints** while the supervised runtime child connects to it as it would to Cubase. Real ports, real SysEx bytes on the wire, a real handshake, Ask-mode refusal, and an approved tempo write arriving as `setTempoBPM(mapping, 124)`. Skipped automatically where the optional MIDI backend is not installed.
+
+`node scripts/cubase-peer.mjs` runs that peer standalone, publishing `OrchestrAI Bridge` ports you can connect the desktop app to without Cubase.
+
+What remains unverified is exactly one thing: **Cubase's own interpretation of those API calls**. Everything up to the moment Cubase receives them is covered. To close that last gap, follow the setup above with Cubase running — a Steinberg trial license is sufficient — then approve a tempo change and confirm it in Cubase's transport panel. Windows bridge verification is deferred alongside the existing Windows smoke limitation.
 
 ## Local data and recovery
 
