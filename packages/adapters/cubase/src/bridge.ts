@@ -18,6 +18,7 @@ import {
   requestSchema,
   responseSchema,
   stateResultSchema,
+  revisionResultSchema,
   type BridgeRequest,
 } from './protocol';
 import type { MidiTransport } from './transport';
@@ -57,6 +58,7 @@ export class CubaseBridgeAdapter implements DawAdapter {
     }
   >();
   private session: BridgeSession | null = null;
+  private cached: { revision: number; project: ProjectState } | null = null;
   private timeoutMs: number;
   private handshakeTimeoutMs: number;
   private log: (event: string, detail: string) => void;
@@ -95,6 +97,7 @@ export class CubaseBridgeAdapter implements DawAdapter {
     this.session = { daw: hello.daw, operations: hello.operations };
   }
   async disconnect() {
+    this.cached = null;
     await this.teardown();
   }
   /**
@@ -133,14 +136,37 @@ export class CubaseBridgeAdapter implements DawAdapter {
         id,
         // Capability truth comes from the handshake, never from a static list.
         support: reported.has(id) ? 'bridge' : 'unsupported',
-        risk: id.includes('.get_') ? 'read' : 'safe-write',
+        // A host command acts on whatever Cubase has selected rather than on an
+        // argument the producer was shown, which is what destructive means here.
+        risk: id.includes('.get_')
+          ? 'read'
+          : id === 'host.run_command'
+            ? 'destructive'
+            : 'safe-write',
         requiresConfirmation: !id.includes('.get_'),
       }));
   }
+  /**
+   * A session is a large SysEx message and MIDI is a slow wire, so the state is
+   * cached against the session's own revision: the poll that finds nothing
+   * changed costs four bytes instead of two kilobytes. A revision probe that
+   * fails for any reason falls through to a full read rather than serving a
+   * cached session that may be stale.
+   */
   async getProjectState(): Promise<ProjectState> {
     this.assertConnected();
+    if (this.cached) {
+      const current = await this.revision().catch(() => null);
+      if (current !== null && current === this.cached.revision) return this.cached.project;
+    }
     const state = stateResultSchema.parse(await this.request({ op: 'get_state' }));
-    return projectSchema.parse({ ...state.project, mock: false });
+    const project = projectSchema.parse({ ...state.project, mock: false });
+    this.cached = { revision: project.revision, project };
+    return project;
+  }
+  private async revision() {
+    const result = revisionResultSchema.parse(await this.request({ op: 'get_revision' }));
+    return result.revision;
   }
   async execute(input: DawCommand) {
     this.assertConnected();
@@ -155,7 +181,11 @@ export class CubaseBridgeAdapter implements DawAdapter {
         arguments: command.arguments as Record<string, unknown>,
       }),
     );
-    return { project: projectSchema.parse({ ...result.project, mock: false }) };
+    // A write answers with the state it produced, so the cache is refreshed
+    // from the write rather than invalidated and re-read over the wire.
+    const project = projectSchema.parse({ ...result.project, mock: false });
+    this.cached = { revision: project.revision, project };
+    return { project };
   }
   private assertConnected() {
     if (!this.session) throw new Error('The Cubase bridge is disconnected.');

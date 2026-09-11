@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, copyFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { decodeFrame, encodeFrame } from '../packages/adapters/cubase/src';
+import { HOST_COMMANDS } from '../packages/shared-types/src';
 
 const require_ = createRequire(import.meta.url);
 type SysexHandler = (device: unknown, sysex: number[]) => void;
@@ -24,8 +25,20 @@ interface StubChannel {
   };
   mOnTitleChange: (d: unknown, m: unknown, title: string) => void;
 }
+type StubValue = { mOnProcessValueChange: (d: unknown, m: unknown, v: number) => void };
+type StubTitle = (d: unknown, m: unknown, title: string) => void;
+interface StubSelected {
+  mOnTitleChange: StubTitle;
+  mValue: { mAutomationRead: StubValue; mAutomationWrite: StubValue };
+  mChannelEQ: Record<
+    'mBand1' | 'mBand2' | 'mBand3' | 'mBand4',
+    { mOn: StubValue; mGain: StubValue; mFreq: StubValue; mQ: StubValue }
+  >;
+}
 interface StubDriver {
   _channels: StubChannel[];
+  _selected: StubSelected;
+  _inserts: { mOnTitleChange: StubTitle; mOn: StubValue; mBypass: StubValue }[];
   _input: { name: string; mOnSysex: SysexHandler };
   _output: { name: string };
   _page: {
@@ -95,10 +108,20 @@ describe('driver script inside a Cubase-shaped host', () => {
     const bindings = api.log.filter((entry) => entry.call === 'makeValueBinding');
     expect(bindings.filter((entry) => /^bridge/.test(String(entry.surfaceValue)))).toHaveLength(2);
     // One bank of sixteen channels, each with volume, mute, and solo.
-    // One bank of sixteen: volume, mute, solo, bypass, and eight quick
-    // controls per channel.
+    // One bank of sixteen: volume, mute, solo, pan, arm, monitor, select,
+    // bypass, and eight quick controls per channel.
     expect(bindings.filter((entry) => /^track/.test(String(entry.surfaceValue)))).toHaveLength(
-      16 * 12,
+      16 * 16,
+    );
+    // The selected track carries the depth: two automation arms, four EQ bands
+    // of four values, four send slots of three, and eight insert slots of two.
+    const selected = bindings.filter((entry) => /^sel/.test(String(entry.surfaceValue)));
+    expect(selected).toHaveLength(2 + 4 * 4 + 4 * 3 + 8 * 2);
+    // Commands are bound by name from the allowlist, never assembled from a
+    // request: a name that is not bound cannot be run.
+    const commands = api.log.filter((entry) => entry.call === 'makeCommandBinding');
+    expect(commands.map((entry) => `${entry.commandCategory}/${entry.commandName}`)).toEqual(
+      HOST_COMMANDS.map((command) => `${command.category}/${command.name}`),
     );
     expect(typeof api.driver._input.mOnSysex).toBe('function');
   });
@@ -173,6 +196,10 @@ describe('driver script inside a Cubase-shaped host', () => {
         type: 'audio',
         mute: false,
         solo: false,
+        pan: 0.5,
+        recordEnabled: false,
+        monitoring: false,
+        selected: false,
         volume: 0.82,
         plugin: null,
       },
@@ -182,6 +209,10 @@ describe('driver script inside a Cubase-shaped host', () => {
         type: 'audio',
         mute: true,
         solo: false,
+        pan: 0.5,
+        recordEnabled: false,
+        monitoring: false,
+        selected: false,
         volume: 0.6,
         plugin: null,
       },
@@ -222,7 +253,7 @@ describe('driver script inside a Cubase-shaped host', () => {
     );
     expect(lastResponse(api)).toMatchObject({
       ok: false,
-      error: expect.stringContaining('no track'),
+      error: expect.stringContaining('not showing a track'),
     });
     expect(api.log.some((entry) => entry.call === 'setProcessValue')).toBe(false);
   });
@@ -303,5 +334,192 @@ describe('driver script inside a Cubase-shaped host', () => {
       ok: false,
       error: expect.stringContaining('Malformed'),
     });
+  });
+  it('pages the mixer bank through the host action and reports the window', () => {
+    const device = { id: 'device' };
+    api.log.length = 0;
+    api.driver._input.mOnSysex(
+      device,
+      request(30, { op: 'execute', tool: 'mixer.page', arguments: { direction: 'next' } }),
+    );
+    // The host's own bank action is what moves the window; the script does not
+    // try to address channels outside it.
+    expect(api.log.filter((entry) => entry.call === 'bank').map((entry) => entry.name)).toEqual([
+      'next',
+    ]);
+    const project = (lastResponse(api) as { result: { project: { bank: unknown } } }).result
+      .project;
+    expect(project.bank).toEqual({ offset: 16, size: 16, total: null });
+    api.driver._input.mOnSysex(
+      device,
+      request(31, { op: 'execute', tool: 'mixer.page', arguments: { direction: 'left' } }),
+    );
+    expect(
+      (lastResponse(api) as { result: { project: { bank: { offset: number } } } }).result.project
+        .bank.offset,
+    ).toBe(15);
+    api.driver._input.mOnSysex(
+      device,
+      request(32, { op: 'execute', tool: 'mixer.page', arguments: { direction: 'reset' } }),
+    );
+    expect(
+      (lastResponse(api) as { result: { project: { bank: { offset: number } } } }).result.project
+        .bank.offset,
+    ).toBe(0);
+  });
+
+  it('reports the selected track, with only the inserts the session has loaded', () => {
+    const device = { id: 'device' };
+    const selected = api.driver._selected;
+    selected.mOnTitleChange(device, {}, 'Sub bass');
+    selected.mChannelEQ.mBand2.mOn.mOnProcessValueChange(device, {}, 1);
+    selected.mChannelEQ.mBand2.mGain.mOnProcessValueChange(device, {}, 0.7);
+    selected.mValue.mAutomationWrite.mOnProcessValueChange(device, {}, 1);
+    api.driver._inserts[0].mOnTitleChange(device, {}, 'Compressor');
+    api.driver._inserts[0].mBypass.mOnProcessValueChange(device, {}, 1);
+    api.driver._input.mOnSysex(device, request(33, { op: 'get_state' }));
+    const channel = (
+      lastResponse(api) as {
+        result: {
+          project: {
+            selectedChannel: {
+              name: string;
+              automation: { read: boolean; write: boolean };
+              eq: { band: number; on: boolean; gain: number }[];
+              inserts: { slot: number; name: string; bypassed: boolean }[];
+              sends: unknown[];
+            };
+          };
+        };
+      }
+    ).result.project.selectedChannel;
+    expect(channel.name).toBe('Sub bass');
+    expect(channel.automation).toEqual({ read: false, write: true });
+    expect(channel.eq.find((band) => band.band === 2)).toMatchObject({ on: true, gain: 0.7 });
+    // Empty slots are absent rather than reported as nameless inserts.
+    expect(channel.inserts).toEqual([{ slot: 0, name: 'Compressor', on: false, bypassed: true }]);
+    expect(channel.sends).toHaveLength(4);
+  });
+
+  it('writes EQ, sends and automation through the selected channel', () => {
+    const device = { id: 'device' };
+    api.driver._selected.mOnTitleChange(device, {}, 'Sub bass');
+    api.log.length = 0;
+    api.driver._input.mOnSysex(
+      device,
+      request(34, {
+        op: 'execute',
+        tool: 'channel.set_eq_band',
+        arguments: { band: 3, gain: 0.25, on: true },
+      }),
+    );
+    const writes = api.log.filter((entry) => entry.call === 'setProcessValue');
+    expect(writes.map((entry) => [entry.name, entry.value])).toEqual([
+      ['selEq2on', 1],
+      ['selEq2gain', 0.25],
+    ]);
+    api.log.length = 0;
+    api.driver._input.mOnSysex(
+      device,
+      request(35, {
+        op: 'execute',
+        tool: 'channel.set_send',
+        arguments: { slot: 1, level: 0.4, preFader: true },
+      }),
+    );
+    expect(
+      api.log
+        .filter((entry) => entry.call === 'setProcessValue')
+        .map((entry) => [entry.name, entry.value]),
+    ).toEqual([
+      ['selSend1level', 0.4],
+      ['selSend1preFader', 1],
+    ]);
+  });
+
+  it('refuses a selected-channel write when Cubase has nothing selected', () => {
+    // Cubase reports an empty title when the selection is cleared.
+    api.driver._selected.mOnTitleChange({ id: 'device' }, {}, '');
+    api.log.length = 0;
+    api.driver._input.mOnSysex(
+      { id: 'device' },
+      request(36, {
+        op: 'execute',
+        tool: 'channel.set_eq_band',
+        arguments: { band: 1, gain: 0.5 },
+      }),
+    );
+    expect(lastResponse(api)).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('No track is selected'),
+    });
+    expect(api.log.some((entry) => entry.call === 'setProcessValue')).toBe(false);
+  });
+
+  it('runs an allowlisted command and refuses anything else', () => {
+    const device = { id: 'device' };
+    api.log.length = 0;
+    api.driver._input.mOnSysex(
+      device,
+      request(37, { op: 'execute', tool: 'host.run_command', arguments: { command: 'save' } }),
+    );
+    // A bound command reads as a button press.
+    expect(
+      api.log
+        .filter((entry) => entry.call === 'setProcessValue')
+        .map((entry) => [entry.name, entry.value]),
+    ).toEqual([
+      ['cmd_save', 1],
+      ['cmd_save', 0],
+    ]);
+    expect(lastResponse(api)).toMatchObject({
+      ok: true,
+      result: { command: { id: 'save', name: 'Save', dialog: false } },
+    });
+    // A dialog command is reported as opened, not as done.
+    api.driver._input.mOnSysex(
+      device,
+      request(38, {
+        op: 'execute',
+        tool: 'host.run_command',
+        arguments: { command: 'export_mixdown' },
+      }),
+    );
+    expect(lastResponse(api)).toMatchObject({ result: { command: { dialog: true } } });
+    // Nothing outside the allowlist can be reached, whatever is asked for.
+    api.log.length = 0;
+    api.driver._input.mOnSysex(
+      device,
+      request(39, {
+        op: 'execute',
+        tool: 'host.run_command',
+        arguments: { command: 'Delete Everything' },
+      }),
+    );
+    expect(lastResponse(api)).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('not one this bridge will run'),
+    });
+    expect(api.log.some((entry) => entry.call === 'setProcessValue')).toBe(false);
+  });
+
+  it('writes arm, monitor and selection through their bound surface values', () => {
+    const device = { id: 'device' };
+    api.driver._channels[0].mOnTitleChange(device, {}, 'Kick');
+    api.log.length = 0;
+    for (const [tool, args, expected] of [
+      ['track.set_record_enable', { trackId: 'track-0', armed: true }, ['trackArm0', 1]],
+      ['track.set_monitor', { trackId: 'track-0', monitoring: true }, ['trackMonitor0', 1]],
+      ['track.select', { trackId: 'track-0' }, ['trackSelect0', 1]],
+      ['track.set_pan', { trackId: 'track-0', pan: 0.25 }, ['trackPan0', 0.25]],
+    ] as const) {
+      api.log.length = 0;
+      api.driver._input.mOnSysex(device, request(40, { op: 'execute', tool, arguments: args }));
+      expect(
+        api.log
+          .filter((entry) => entry.call === 'setProcessValue')
+          .map((entry) => [entry.name, entry.value]),
+      ).toEqual([expected]);
+    }
   });
 });

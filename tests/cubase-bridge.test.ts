@@ -163,6 +163,30 @@ describe('Cubase bridge adapter', () => {
     await adapter.disconnect();
     await peer.stop();
   });
+  it('polls the revision and re-reads only when the session changed', async () => {
+    const { adapter, peer, host } = connectedBridge();
+    await peer.start();
+    await adapter.connect();
+    const ops: string[] = [];
+    peer.onRequest = (request) => ops.push((request as { op: string }).op);
+    const first = await adapter.getProjectState();
+    // The first read has nothing cached, so it costs a full state.
+    expect(ops).toEqual(['get_state']);
+    ops.length = 0;
+    // A session that has not changed costs a revision probe, not a session.
+    const second = await adapter.getProjectState();
+    expect(ops).toEqual(['get_revision']);
+    expect(second).toEqual(first);
+    // A change made in Cubase by hand bumps the revision, and the next read
+    // fetches the session rather than serving a stale one.
+    ops.length = 0;
+    host.setTempo(126);
+    const third = await adapter.getProjectState();
+    expect(ops).toEqual(['get_revision', 'get_state']);
+    expect(third.tempo).toBe(126);
+    await adapter.disconnect();
+    await peer.stop();
+  });
   it('keeps published ports open across handshake retries until the window closes', async () => {
     const pair = new LoopbackMidiPair();
     const hostTransport = pair.host();

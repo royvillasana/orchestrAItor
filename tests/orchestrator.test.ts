@@ -316,4 +316,47 @@ describe('permission-controlled orchestration', () => {
     await adapter.disconnect();
     expect((await core.decide(a.id, core.sessionId, true)).status).toBe('failed');
   });
+  it('treats a host command as destructive and says what it will act on', async () => {
+    const { core } = fixture();
+    await core.connect();
+    await core.setMode('assist');
+    const request = await core.request('host.run_command', { command: 'remove_tracks' }, 'c');
+    expect(request.status).toBe('awaiting-approval');
+    // A command takes no arguments and acts on the selection, so the approval
+    // has to name the selection rather than leaving the producer to guess.
+    expect(request.detail).toContain('Remove the selected tracks');
+    expect(request.detail).toContain('"Kick"');
+    const dialog = await core.request('host.run_command', { command: 'export_mixdown' }, 'c');
+    // A command that opens a window is not reported as something we completed.
+    expect(dialog.detail).toContain('opens a dialog');
+    // Never unattended: destructive risk keeps it off the standing list.
+    await core.setMode('agent');
+    await core.startRun({ maxWrites: 4, maxSeconds: 60 });
+    const inRun = await core.request('host.run_command', { command: 'save' }, 'c');
+    expect(inRun.status).toBe('awaiting-approval');
+  });
+
+  it('refuses a selected-channel write when nothing is selected, and follows the selection', async () => {
+    const { core } = fixture();
+    await core.connect();
+    await core.setMode('assist');
+    // The fixture starts with the kick selected; EQ follows the selection.
+    const approve = async (tool: string, args: Record<string, unknown>) => {
+      const call = await core.request(tool, args, 'c');
+      return core.decide(call.id, call.sessionId, true);
+    };
+    const eq = await approve('channel.set_eq_band', { band: 1, gain: 0.8 });
+    expect(eq.status).toBe('succeeded');
+    expect((await core.state()).project?.selectedChannel?.eq[0].gain).toBe(0.8);
+    // Selecting another track moves what those tools address.
+    await approve('track.select', { trackId: 'bass' });
+    const state = await core.state();
+    expect(state.project?.selectedChannel?.trackId).toBe('bass');
+    expect(state.project?.tracks.find((track) => track.id === 'kick')?.selected).toBe(false);
+    // A slot the channel does not have is refused rather than invented.
+    const missing = await core.request('channel.set_send', { slot: 9, level: 0.5 }, 'c');
+    const settled = await core.decide(missing.id, missing.sessionId, true);
+    expect(settled.status).toBe('failed');
+    expect(settled.detail).toContain('no send slot 9');
+  });
 });

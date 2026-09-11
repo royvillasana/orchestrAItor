@@ -216,9 +216,9 @@ export function Studio({ setup = false }: { setup?: boolean }) {
     setContent('');
     await run((api) => api.sendMessage({ conversationId: id, content: text }));
   };
-  const tool = async (name: ToolName) => {
+  const tool = async (name: ToolName, args: Record<string, unknown> = {}) => {
     await run((api) =>
-      api.callTool({ tool: name, arguments: {}, conversationId: conversationId || 'system' }),
+      api.callTool({ tool: name, arguments: args, conversationId: conversationId || 'system' }),
     );
   };
   const runtime = data?.runtime;
@@ -843,10 +843,18 @@ export function Studio({ setup = false }: { setup?: boolean }) {
                     kind={track.type === 'audio' ? 'wave' : 'settings'}
                     className="text-muted"
                   />
-                  <span className={`truncate ${track.mute ? 'text-muted line-through' : ''}`}>
+                  <span
+                    className={`truncate ${track.mute ? 'text-muted line-through' : ''} ${
+                      track.selected ? 'text-accent' : ''
+                    }`}
+                  >
                     {track.name}
                   </span>
                   <span className="ml-auto flex shrink-0 items-center gap-1 font-mono text-[9px]">
+                    {/* Armed and monitoring are worth seeing at a glance: they
+                        decide what a record command would capture. */}
+                    {track.recordEnabled && <span className="text-rose-400">●</span>}
+                    {track.monitoring && <span className="text-sky-300">I</span>}
                     {track.solo && <span className="text-warm">S</span>}
                     {track.mute && <span className="text-muted">M</span>}
                     {/* The fader position the DAW reports, shown as a percentage
@@ -893,9 +901,73 @@ export function Studio({ setup = false }: { setup?: boolean }) {
               </div>
             ))}
             {project?.tracksTruncated && (
-              <p className="mt-2 px-2 text-[9px] leading-4 text-muted/60">
-                Showing the first bank of channels; this project may have more.
-              </p>
+              <div className="mt-2 space-y-1 px-2">
+                <p className="text-[9px] leading-4 text-muted/60">
+                  {/* A control surface reads a window. Saying which one, and
+                      offering to move it, beats implying the session ends here. */}
+                  Channels {(project.bank?.offset ?? 0) + 1}–
+                  {(project.bank?.offset ?? 0) + project.tracks.length} of this session.
+                </p>
+                <div className="flex items-center gap-1">
+                  {(
+                    [
+                      ['previous', '‹‹'],
+                      ['left', '‹'],
+                      ['right', '›'],
+                      ['next', '››'],
+                    ] as const
+                  ).map(([direction, label]) => (
+                    <button
+                      key={direction}
+                      disabled={busy || !connected}
+                      onClick={() => void tool('mixer.page', { direction })}
+                      className="rounded border border-line px-1.5 py-0.5 font-mono text-[9px] text-muted transition hover:border-muted hover:text-paper disabled:opacity-40"
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {project?.selectedChannel && (
+              <div className="mt-3 rounded-lg border border-line/60 px-2 py-2">
+                <p className="mb-1.5 text-[9px] font-semibold tracking-[0.14em] text-muted">
+                  SELECTED · {project.selectedChannel.name.toUpperCase()}
+                </p>
+                {/* EQ, sends and inserts belong to one channel at a time, which
+                    is what the API exposes and how a producer works. */}
+                <div className="flex flex-wrap gap-1 text-[9px] text-muted/70">
+                  {project.selectedChannel.eq
+                    .filter((band) => band.on)
+                    .map((band) => (
+                      <span key={band.band} className="rounded border border-line px-1 py-0.5">
+                        EQ{band.band} {Math.round(band.gain * 100)}
+                      </span>
+                    ))}
+                  {project.selectedChannel.sends
+                    .filter((send) => send.on)
+                    .map((send) => (
+                      <span key={send.slot} className="rounded border border-line px-1 py-0.5">
+                        Send {send.slot + 1} {Math.round(send.level * 100)}
+                      </span>
+                    ))}
+                  {project.selectedChannel.inserts.map((insert) => (
+                    <span
+                      key={insert.slot}
+                      className={`rounded border border-line px-1 py-0.5 ${
+                        insert.bypassed ? 'line-through' : ''
+                      }`}
+                    >
+                      {insert.name}
+                    </span>
+                  ))}
+                  {project.selectedChannel.automation.write && (
+                    <span className="rounded border border-warm/40 px-1 py-0.5 text-warm">
+                      Automation write
+                    </span>
+                  )}
+                </div>
+              </div>
             )}
           </div>
           <div className="mx-5 border-t border-line" />

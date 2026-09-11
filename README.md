@@ -67,11 +67,14 @@ The renderer has context isolation and sandbox enabled, Node integration disable
 
 Available normalized tools (the mock supports all of them; a live bridge exposes what its handshake reports):
 
-- `project.get_state`
-- `project.get_tempo`
-- `project.set_tempo` (20–300 BPM in the mock)
-- `transport.play`
-- `transport.stop`
+- `project.get_state`, `project.get_tempo`, `project.set_tempo` (20–300 BPM in the mock)
+- `transport.play`, `transport.stop` — these need no approval; see [Modes](#agent-mode)
+- `track.set_volume`, `track.set_mute`, `track.set_solo`, `track.set_pan`, `track.set_record_enable`, `track.set_monitor`, `track.select`
+- `channel.set_eq_band`, `channel.set_send`, `channel.set_insert`, `channel.set_automation` — these act on the selected track
+- `plugin.set_bypass`, `plugin.set_quick_control`
+- `mixer.page` — move the sixteen-channel window
+- `host.run_command` — one of a fixed allowlist of Cubase commands, classified destructive
+- `samples.search`, `samples.stats`, `midi.create_clip` — local, no DAW needed
 
 Ask exposes reads and denies writes at execution time. Assist requires approval for every write. Approvals bind immutable arguments to a request and session, expire after five minutes, are consumed once, and are invalidated on cancellation, mode change, disconnect, or restart. Writes are serialized and capability-checked again immediately before execution.
 
@@ -110,7 +113,7 @@ The MIDI backend is an **optional** dependency, deliberately not installed by de
 
 ### Tracks
 
-A connected session reports its channels — name, level, mute, solo — read from Cubase's own callbacks rather than from what the driver script last wrote, so a fader moved by hand in Cubase is reflected rather than overwritten. `track.set_volume`, `track.set_mute`, and `track.set_solo` address one track by id, take the same approval as any other write, and are refused before anything is sent if the named track is not in the reported state.
+A connected session reports its channels — name, level, pan, mute, solo, record arm, input monitoring, and which one is selected — read from Cubase's own callbacks rather than from what the driver script last wrote, so a fader moved by hand in Cubase is reflected rather than overwritten. `track.set_volume`, `track.set_mute`, `track.set_solo`, `track.set_pan`, `track.set_record_enable`, `track.set_monitor`, and `track.select` address one track by id, take the same approval as any other write, and are refused before anything is sent if the bank is not currently showing that track.
 
 Each track also reports its instrument plugin — name, bypass state, and the **quick controls** the session exposes — and `plugin.set_bypass` and `plugin.set_quick_control` change them under the same approval as any other write.
 
@@ -118,7 +121,27 @@ Quick controls are the surface, deliberately. A plugin has hundreds of parameter
 
 **Volume is the fader position, 0 to 1, not decibels.** Converting would mean reproducing Steinberg's fader taper, which this project would be guessing at, and a wrong decibel figure reads as authoritative in a way an honest normalized one does not. The interface shows a percentage; Cubase shows the decibels, correctly.
 
-The bank covers the first 16 channels of audio, instrument, MIDI, group, and FX kinds. A larger session is reported as truncated rather than as though the list were the whole project. Creating, renaming, and reordering tracks, sends, inserts, EQ, and automation remain out of scope.
+### The selected channel
+
+EQ, sends, inserts and automation arm belong to **one channel at a time** — that is where the MIDI Remote API puts them — so changing any of them means selecting a track first. `track.select` does that; `channel.set_eq_band`, `channel.set_send`, `channel.set_insert` and `channel.set_automation` then act on whatever is selected, and are refused when nothing is.
+
+Four EQ bands (on, gain, frequency, Q), the channel's send slots (on, level, pre/post), and eight insert slots (on, bypass) are reported and writable. An insert slot with nothing loaded is reported as absent rather than as a nameless plugin. Everything continuous is normalized 0 to 1, for the same reason volume is.
+
+### The bank is a window
+
+The bank shows 16 channels of audio, instrument, MIDI, group, and FX kinds, and `mixer.page` moves it — a bank at a time, or one channel at a time. A session larger than the window reports which channels it is showing rather than presenting the window as the whole project, and the track list offers the paging controls when it is.
+
+The session state is cached against Cubase's own revision counter. A session is a large SysEx message and MIDI is a slow wire, so a poll that finds nothing changed costs a four-byte revision probe rather than a re-read of the project. A write refreshes the cache from the state the write returned. This matters more than it sounds: before it, routine polling queued round trips until requests timed out and the bridge reported itself disconnected.
+
+### Host commands
+
+A control surface cannot address project structure directly, so Cubase's own command list is the way in. `host.run_command` runs one of a **fixed allowlist** declared in the driver script: save, undo, redo, record, duplicate tracks, remove selected tracks, add a group or FX channel, and three that open a dialog — rename track, export mixdown, import MIDI file. Anything outside the list cannot be reached from a session at all.
+
+Commands are classified **destructive**, which means they never run unattended in Agent mode, and their approval names both the command and the track Cubase reports as selected — because a command takes no arguments and acts on the selection rather than on anything the producer was shown. A command that opens a dialog is reported as opened, not as done: the API cannot fill in a dialog.
+
+### What remains out of reach
+
+Creating audio, instrument or MIDI tracks (the command opens a dialog this API cannot answer), naming a track, exporting to a chosen path, loading or replacing a plugin, editing existing MIDI or audio events, and placing generated content in the project. These are not missing work — a control-surface API has no way to express them. Reaching them would need a different integration, and this project would rather say so than imply a producer can ask for them.
 
 ### What is verified, and what is not
 

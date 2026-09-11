@@ -110,15 +110,17 @@ export function decodeFrame(bytes: Uint8Array): DecodeResult {
   }
 }
 
-export const bridgeOperations = ['hello', 'get_state', 'execute'] as const;
+export const bridgeOperations = ['hello', 'get_state', 'get_revision', 'execute'] as const;
 export const requestSchema = z.discriminatedUnion('op', [
   z.object({ op: z.literal('hello'), protocol: z.number().int().nonnegative() }).strict(),
   z.object({ op: z.literal('get_state') }).strict(),
+  z.object({ op: z.literal('get_revision') }).strict(),
   z
     .object({ op: z.literal('execute'), tool: toolNameSchema, arguments: z.record(z.unknown()) })
     .strict(),
 ]);
 export type BridgeRequest = z.infer<typeof requestSchema>;
+export const revisionResultSchema = z.object({ revision: z.number().int().nonnegative() }).strict();
 export const helloResultSchema = z
   .object({
     protocol: z.number().int().nonnegative(),

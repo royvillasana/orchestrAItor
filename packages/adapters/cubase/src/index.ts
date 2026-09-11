@@ -8,6 +8,7 @@ import {
   toolSchemas,
   toolNames,
   isLocalTool,
+  hostCommand,
   type Capability,
   type DawAdapter,
   type DawCommand,
@@ -24,7 +25,18 @@ export const initialProject = (): ProjectState => ({
   mock: true,
   // Volume is the normalized fader position both adapters now report.
   tracks: [
-    { id: 'kick', name: 'Kick', type: 'audio', mute: false, solo: false, volume: 0.82 },
+    {
+      id: 'kick',
+      name: 'Kick',
+      type: 'audio',
+      mute: false,
+      solo: false,
+      volume: 0.82,
+      pan: 0.5,
+      recordEnabled: false,
+      monitoring: false,
+      selected: true,
+    },
     {
       id: 'bass',
       name: 'Sub bass',
@@ -32,6 +44,10 @@ export const initialProject = (): ProjectState => ({
       mute: false,
       solo: false,
       volume: 0.74,
+      pan: 0.42,
+      recordEnabled: false,
+      monitoring: false,
+      selected: false,
       // What a session exposes on a control surface, not every parameter.
       plugin: {
         name: 'Retrologue',
@@ -43,13 +59,55 @@ export const initialProject = (): ProjectState => ({
         ],
       },
     },
-    { id: 'percussion', name: 'Percussion', type: 'audio', mute: false, solo: false, volume: 0.66 },
-    { id: 'keys', name: 'Analog keys', type: 'instrument', mute: false, solo: false, volume: 0.58 },
+    {
+      id: 'percussion',
+      name: 'Percussion',
+      type: 'audio',
+      mute: false,
+      solo: false,
+      volume: 0.66,
+      pan: 0.58,
+      recordEnabled: false,
+      monitoring: false,
+      selected: false,
+    },
+    {
+      id: 'keys',
+      name: 'Analog keys',
+      type: 'instrument',
+      mute: false,
+      solo: false,
+      volume: 0.58,
+      pan: 0.5,
+      recordEnabled: false,
+      monitoring: false,
+      selected: false,
+    },
   ],
+  // The fixture is smaller than a bank, so the window is the whole session.
+  bank: { offset: 0, size: 16, total: 4 },
+  selectedChannel: {
+    trackId: 'kick',
+    name: 'Kick',
+    automation: { read: true, write: false },
+    eq: [
+      { band: 1, on: true, gain: 0.42, frequency: 0.18, q: 0.5 },
+      { band: 2, on: false, gain: 0.5, frequency: 0.4, q: 0.5 },
+      { band: 3, on: false, gain: 0.5, frequency: 0.62, q: 0.5 },
+      { band: 4, on: true, gain: 0.55, frequency: 0.86, q: 0.4 },
+    ],
+    sends: [
+      { slot: 0, on: true, level: 0.3, preFader: false },
+      { slot: 1, on: false, level: 0, preFader: false },
+    ],
+    inserts: [{ slot: 0, name: 'Compressor', on: true, bypassed: false }],
+  },
 });
 export class MockCubaseAdapter implements DawAdapter {
   private connected = false;
   private project = initialProject();
+  /** Commands the fixture was asked to run, so a test can see what happened. */
+  readonly commands: string[] = [];
   async connect() {
     this.connected = true;
   }
@@ -65,7 +123,13 @@ export class MockCubaseAdapter implements DawAdapter {
     ].map((id) => ({
       id,
       support: this.connected && toolNames.some((n) => n === id) ? 'native' : 'unsupported',
-      risk: id.includes('.get_') ? 'read' : 'safe-write',
+      // A host command acts on whatever is selected rather than on an argument,
+      // which is exactly the shape of a destructive operation.
+      risk: id.includes('.get_')
+        ? 'read'
+        : id === 'host.run_command'
+          ? 'destructive'
+          : 'safe-write',
       requiresConfirmation: !id.includes('.get_'),
     }));
   }
@@ -104,6 +168,61 @@ export class MockCubaseAdapter implements DawAdapter {
       track.mute = toolSchemas['track.set_mute'].parse(command.arguments).mute;
     if (command.tool === 'track.set_solo')
       track.solo = toolSchemas['track.set_solo'].parse(command.arguments).solo;
+    if (command.tool === 'track.set_pan')
+      track.pan = toolSchemas['track.set_pan'].parse(command.arguments).pan;
+    if (command.tool === 'track.set_record_enable')
+      track.recordEnabled = toolSchemas['track.set_record_enable'].parse(command.arguments).armed;
+    if (command.tool === 'track.set_monitor')
+      track.monitoring = toolSchemas['track.set_monitor'].parse(command.arguments).monitoring;
+    if (command.tool === 'track.select') {
+      // One selection at a time, as the host has.
+      for (const candidate of this.project.tracks) candidate.selected = candidate.id === trackId;
+      this.project.selectedChannel = {
+        ...(this.project.selectedChannel ?? {
+          automation: { read: false, write: false },
+          eq: [],
+          sends: [],
+          inserts: [],
+        }),
+        trackId: track.id,
+        name: track.name,
+      };
+    }
+  }
+  /** EQ, sends, inserts and automation belong to the selected channel. */
+  private applyChannel(command: DawCommand) {
+    const channel = this.project.selectedChannel;
+    if (!channel) throw new Error('No track is selected.');
+    if (command.tool === 'channel.set_automation') {
+      const input = toolSchemas['channel.set_automation'].parse(command.arguments);
+      if (input.read !== undefined) channel.automation.read = input.read;
+      if (input.write !== undefined) channel.automation.write = input.write;
+    }
+    if (command.tool === 'channel.set_eq_band') {
+      const input = toolSchemas['channel.set_eq_band'].parse(command.arguments);
+      const band = channel.eq.find((candidate) => candidate.band === input.band);
+      if (!band) throw new Error(`This channel has no EQ band ${input.band}.`);
+      if (input.on !== undefined) band.on = input.on;
+      if (input.gain !== undefined) band.gain = input.gain;
+      if (input.frequency !== undefined) band.frequency = input.frequency;
+      if (input.q !== undefined) band.q = input.q;
+    }
+    if (command.tool === 'channel.set_send') {
+      const input = toolSchemas['channel.set_send'].parse(command.arguments);
+      const send = channel.sends.find((candidate) => candidate.slot === input.slot);
+      if (!send) throw new Error(`This channel has no send slot ${input.slot}.`);
+      if (input.on !== undefined) send.on = input.on;
+      if (input.level !== undefined) send.level = input.level;
+      if (input.preFader !== undefined) send.preFader = input.preFader;
+    }
+    if (command.tool === 'channel.set_insert') {
+      const input = toolSchemas['channel.set_insert'].parse(command.arguments);
+      const insert = channel.inserts.find((candidate) => candidate.slot === input.slot);
+      // An empty slot is refused rather than filled in.
+      if (!insert) throw new Error(`Insert slot ${input.slot} is empty.`);
+      if (input.on !== undefined) insert.on = input.on;
+      if (input.bypassed !== undefined) insert.bypassed = input.bypassed;
+    }
   }
   async execute(input: DawCommand) {
     this.assertConnected();
@@ -114,7 +233,21 @@ export class MockCubaseAdapter implements DawAdapter {
     if (command.tool === 'transport.play') this.project.playing = true;
     if (command.tool === 'transport.stop') this.project.playing = false;
     if (command.tool.startsWith('track.')) this.applyTrack(command);
+    if (command.tool.startsWith('channel.')) this.applyChannel(command);
     if (command.tool.startsWith('plugin.')) this.applyPlugin(command);
+    if (command.tool === 'mixer.page') {
+      // The fixture is smaller than one bank, so paging has nowhere to go and
+      // says so rather than pretending to move.
+      throw new Error('This mock session fits in one bank, so there is nothing to page to.');
+    }
+    if (command.tool === 'host.run_command') {
+      const { command: id } = toolSchemas['host.run_command'].parse(command.arguments);
+      const entry = hostCommand(id);
+      if (!entry) throw new Error(`Command "${id}" is not one this bridge will run.`);
+      // Recorded as run against the fixture; nothing is saved to disk, and the
+      // detail says so rather than implying a real project was written.
+      this.commands.push(entry.id);
+    }
     if (!command.tool.includes('.get_')) this.project.revision++;
     return { project: await this.getProjectState() };
   }

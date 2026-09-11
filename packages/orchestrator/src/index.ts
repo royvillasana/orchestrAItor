@@ -11,6 +11,7 @@ import {
   localToolNames,
   isLocalTool,
   isUnpromptedTool,
+  hostCommand,
   isLocalWriteTool,
   activitySchema,
   errorText,
@@ -232,6 +233,21 @@ export class Orchestrator {
         allowed.add(capability.id);
     return allowed;
   }
+  /**
+   * A host command takes no arguments and acts on whatever the session has
+   * selected, so the approval has to say what that is. Everything else can be
+   * read from the arguments the producer is already shown.
+   */
+  private async approvalDetail(call: Activity) {
+    if (call.tool !== 'host.run_command') return 'Waiting for your approval. No changes made.';
+    const entry = hostCommand(String(call.arguments.command));
+    const selected = (await this.adapter.getProjectState().catch(() => null))?.tracks.find(
+      (track) => track.selected,
+    );
+    return `${entry?.label ?? 'Run a Cubase command'}. This acts on what Cubase has selected: ${
+      selected ? `"${selected.name}"` : 'nothing is selected'
+    }.${entry?.dialog ? ' This opens a dialog in Cubase for you to finish.' : ''}`;
+  }
   private async invalidate(reason: string) {
     for (const call of this.calls.values())
       if (call.status === 'awaiting-approval')
@@ -322,7 +338,7 @@ export class Orchestrator {
           expiresAt: this.now() + 300000,
           detail: undoOf
             ? 'Approve restoring the previous session state.'
-            : 'Waiting for your approval. No changes made.',
+            : await this.approvalDetail(call),
         });
       }
       return await this.execute(call);
@@ -384,6 +400,29 @@ export class Orchestrator {
           { tool: 'track.set_volume', arguments: { trackId: track.id, volume: track.volume } },
           { tool: 'track.set_mute', arguments: { trackId: track.id, mute: track.mute } },
           { tool: 'track.set_solo', arguments: { trackId: track.id, solo: track.solo } },
+          // Pan, arm and monitor move during a run like anything else on a
+          // channel, so undoing the run has to put them back too.
+          ...(track.pan === undefined
+            ? []
+            : ([
+                { tool: 'track.set_pan', arguments: { trackId: track.id, pan: track.pan } },
+              ] as DawCommand[])),
+          ...(track.recordEnabled === undefined
+            ? []
+            : ([
+                {
+                  tool: 'track.set_record_enable',
+                  arguments: { trackId: track.id, armed: track.recordEnabled },
+                },
+              ] as DawCommand[])),
+          ...(track.monitoring === undefined
+            ? []
+            : ([
+                {
+                  tool: 'track.set_monitor',
+                  arguments: { trackId: track.id, monitoring: track.monitoring },
+                },
+              ] as DawCommand[])),
           // A run may move quick controls without asking, so undoing the run
           // has to put them back; the capability filter below drops these
           // where the adapter reports no plugin control.

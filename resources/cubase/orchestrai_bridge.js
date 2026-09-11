@@ -27,7 +27,50 @@ var OPERATIONS = [
   'track.set_solo',
   'plugin.set_bypass',
   'plugin.set_quick_control',
+  'track.set_pan',
+  'track.set_record_enable',
+  'track.set_monitor',
+  'track.select',
+  'channel.set_eq_band',
+  'channel.set_send',
+  'channel.set_insert',
+  'channel.set_automation',
+  'mixer.page',
+  'host.run_command',
 ];
+//! Cubase commands this script will run, and no others. A command takes no
+//! arguments and acts on whatever is selected, so the allowlist is the safety
+//! boundary. Ids match the host's contract; `dialog` marks the ones that open a
+//! window this API cannot answer, reported as opened rather than as done.
+var COMMANDS = [
+  { id: 'save', category: 'File', name: 'Save', dialog: false },
+  { id: 'undo', category: 'Edit', name: 'Undo', dialog: false },
+  { id: 'redo', category: 'Edit', name: 'Redo', dialog: false },
+  { id: 'record', category: 'Transport', name: 'Record', dialog: false },
+  { id: 'duplicate_tracks', category: 'Project', name: 'Duplicate Tracks', dialog: false },
+  { id: 'remove_tracks', category: 'Project', name: 'Remove Selected Tracks', dialog: false },
+  {
+    id: 'add_group_track',
+    category: 'Project',
+    name: 'Add Track To Selected: Group Channel',
+    dialog: false,
+  },
+  {
+    id: 'add_fx_track',
+    category: 'Project',
+    name: 'Add Track To Selected: FX Channel',
+    dialog: false,
+  },
+  { id: 'rename_track', category: 'Project', name: 'Rename First Selected Track', dialog: true },
+  { id: 'export_mixdown', category: 'File', name: 'Export Audio Mixdown', dialog: true },
+  { id: 'import_midi', category: 'File', name: 'Import MIDI File', dialog: true },
+];
+//! Four bands is what the channel EQ has; sends and inserts are asked of the
+//! host rather than assumed, since they differ by channel type.
+var EQ_BANDS = 4;
+//! Eight insert slots, for the same reason the bank is sixteen channels: it
+//! covers the working case and keeps the SysEx payload small.
+var INSERT_SLOTS = 8;
 //! A bank is a window onto the project, not the project. Sixteen covers most
 //! sessions a producer works with conversationally and keeps the SysEx payload
 //! small; a larger session is reported as truncated rather than as though the
@@ -152,6 +195,10 @@ function createHandler(host) {
           ok: true,
           result: { protocol: PROTOCOL_VERSION, daw: host.daw(), operations: OPERATIONS },
         };
+      //! A whole session is a large SysEx message, and MIDI is a slow wire. The
+      //! revision is four bytes, so a caller can poll cheaply and ask for the
+      //! state only when something actually changed.
+      if (request.op === 'get_revision') return { ok: true, result: { revision: host.revision() } };
       if (request.op === 'get_state') return { ok: true, result: { project: host.readProject() } };
       if (request.op === 'execute') {
         if (OPERATIONS.indexOf(request.tool) === -1)
@@ -162,14 +209,31 @@ function createHandler(host) {
         if (request.tool.indexOf('plugin.') === 0) {
           host.setPlugin(request.tool, request.arguments);
         }
+        if (request.tool === 'mixer.page') host.pageBank(request.arguments.direction);
+        if (request.tool === 'host.run_command')
+          return {
+            ok: true,
+            result: {
+              project: host.readProject(),
+              command: host.runCommand(request.arguments.command),
+            },
+          };
+        if (request.tool.indexOf('channel.') === 0)
+          host.setSelectedChannel(request.tool, request.arguments);
         if (request.tool.indexOf('track.') === 0) {
-          var field =
-            request.tool === 'track.set_volume'
-              ? 'volume'
-              : request.tool === 'track.set_mute'
-                ? 'mute'
-                : 'solo';
-          host.setTrack(request.arguments.trackId, field, request.arguments[field]);
+          var fields = {
+            'track.set_volume': 'volume',
+            'track.set_mute': 'mute',
+            'track.set_solo': 'solo',
+            'track.set_pan': 'pan',
+            'track.set_record_enable': 'armed',
+            'track.set_monitor': 'monitoring',
+            'track.select': 'selected',
+          };
+          var field = fields[request.tool];
+          //! Selecting takes no value of its own: asking for it is the value.
+          var value = request.tool === 'track.select' ? true : request.arguments[field];
+          host.setTrack(request.arguments.trackId, field, value);
         }
         return { ok: true, result: { project: host.readProject() } };
       }
@@ -224,9 +288,17 @@ if (api) {
     var volume = deviceDriver.mSurface.makeCustomValueVariable('trackVolume' + index);
     var mute = deviceDriver.mSurface.makeCustomValueVariable('trackMute' + index);
     var solo = deviceDriver.mSurface.makeCustomValueVariable('trackSolo' + index);
+    var pan = deviceDriver.mSurface.makeCustomValueVariable('trackPan' + index);
+    var armed = deviceDriver.mSurface.makeCustomValueVariable('trackArm' + index);
+    var monitoring = deviceDriver.mSurface.makeCustomValueVariable('trackMonitor' + index);
+    var selected = deviceDriver.mSurface.makeCustomValueVariable('trackSelect' + index);
     page.makeValueBinding(volume, channel.mValue.mVolume);
     page.makeValueBinding(mute, channel.mValue.mMute);
     page.makeValueBinding(solo, channel.mValue.mSolo);
+    page.makeValueBinding(pan, channel.mValue.mPan);
+    page.makeValueBinding(armed, channel.mValue.mRecordEnable);
+    page.makeValueBinding(monitoring, channel.mValue.mMonitorEnable);
+    page.makeValueBinding(selected, channel.mValue.mSelected);
     //! Quick controls are what the producer already chose to expose on a
     //! control surface. Reaching arbitrary plugin parameters would need a
     //! parameter database this script cannot verify, and a wrong parameter
@@ -246,15 +318,152 @@ if (api) {
       volume: 0,
       mute: false,
       solo: false,
+      pan: 0.5,
+      armed: false,
+      monitoring: false,
+      selected: false,
       present: false,
       plugin: { name: '', bypassed: false, present: false },
       quick: quick,
-      surface: { volume: volume, mute: mute, solo: solo, bypass: bypass },
+      surface: {
+        volume: volume,
+        mute: mute,
+        solo: solo,
+        bypass: bypass,
+        pan: pan,
+        armed: armed,
+        monitoring: monitoring,
+        selected: selected,
+      },
     };
     channels.push(entry);
     //! Values come from the host's own callbacks. A script that trusted its own
     //! writes would drift the moment the producer moved a fader by hand.
     bindChannel(channel, entry);
+  }
+  //! The selected track, which is where the API puts a channel's depth: EQ,
+  //! sends and inserts belong to one channel at a time, not to the bank.
+  var selectedChannel = page.mHostAccess.mTrackSelection.mMixerChannel;
+  var selection = {
+    name: '',
+    present: false,
+    automation: { read: false, write: false },
+    eq: [],
+    sends: [],
+    inserts: [],
+    surface: { read: null, write: null },
+  };
+  selectedChannel.mOnTitleChange = function (device, mapping, title) {
+    selection.name = title || '';
+    selection.present = !!title;
+    session.revision++;
+  };
+  var readValue = deviceDriver.mSurface.makeCustomValueVariable('selAutoRead');
+  var writeValue = deviceDriver.mSurface.makeCustomValueVariable('selAutoWrite');
+  page.makeValueBinding(readValue, selectedChannel.mValue.mAutomationRead);
+  page.makeValueBinding(writeValue, selectedChannel.mValue.mAutomationWrite);
+  selection.surface.read = readValue;
+  selection.surface.write = writeValue;
+  selectedChannel.mValue.mAutomationRead.mOnProcessValueChange = function (d, m, value) {
+    selection.automation.read = value >= 0.5;
+  };
+  selectedChannel.mValue.mAutomationWrite.mOnProcessValueChange = function (d, m, value) {
+    selection.automation.write = value >= 0.5;
+  };
+  for (var band = 0; band < EQ_BANDS; band++) bindEqBand(band);
+  function bindEqBand(index) {
+    //! Bands are numbered from one in Cubase's own interface, so they are
+    //! numbered from one here too rather than making a producer translate.
+    var host = selectedChannel.mChannelEQ['mBand' + (index + 1)];
+    var entry = { band: index + 1, on: false, gain: 0.5, frequency: 0.5, q: 0.5, surface: {} };
+    var fields = [
+      ['on', host.mOn],
+      ['gain', host.mGain],
+      ['frequency', host.mFreq],
+      ['q', host.mQ],
+    ];
+    for (var f = 0; f < fields.length; f++) bindEqValue(entry, fields[f][0], fields[f][1], index);
+    selection.eq.push(entry);
+  }
+  function bindEqValue(entry, field, hostValue, index) {
+    var surface = deviceDriver.mSurface.makeCustomValueVariable('selEq' + index + field);
+    page.makeValueBinding(surface, hostValue);
+    entry.surface[field] = surface;
+    hostValue.mOnProcessValueChange = function (device, mapping, value) {
+      entry[field] = field === 'on' ? value >= 0.5 : value;
+    };
+  }
+  //! How many send and insert slots exist is the host's answer, not ours: it
+  //! differs by channel type, and guessing would mean reporting slots that are
+  //! not there.
+  var sendCount = Math.min(16, selectedChannel.mSends.getNumberOfSendSlots());
+  for (var sendIndex = 0; sendIndex < sendCount; sendIndex++) bindSend(sendIndex);
+  function bindSend(index) {
+    var slot = selectedChannel.mSends.getByIndex(index);
+    var entry = { slot: index, on: false, level: 0, preFader: false, surface: {} };
+    var fields = [
+      ['on', slot.mOn],
+      ['level', slot.mLevel],
+      ['preFader', slot.mPrePost],
+    ];
+    for (var f = 0; f < fields.length; f++) {
+      var surface = deviceDriver.mSurface.makeCustomValueVariable('selSend' + index + fields[f][0]);
+      page.makeValueBinding(surface, fields[f][1]);
+      entry.surface[fields[f][0]] = surface;
+      bindSendValue(entry, fields[f][0], fields[f][1]);
+    }
+    selection.sends.push(entry);
+  }
+  function bindSendValue(entry, field, hostValue) {
+    hostValue.mOnProcessValueChange = function (device, mapping, value) {
+      entry[field] = field === 'level' ? value : value >= 0.5;
+    };
+  }
+  //! Insert slots are read through one viewer per slot index, which is the
+  //! access the API gives: a viewer reports what is loaded and can switch it on
+  //! or bypass it. Loading or replacing a plugin is not reachable from here.
+  for (var insertIndex = 0; insertIndex < INSERT_SLOTS; insertIndex++) bindInsert(insertIndex);
+  function bindInsert(index) {
+    var viewer = selectedChannel.mInsertAndStripEffects.makeInsertEffectViewer(
+      'OrchestrAI Insert ' + index,
+    );
+    viewer.accessSlotAtIndex(index);
+    var entry = { slot: index, name: '', on: false, bypassed: false, present: false, surface: {} };
+    var on = deviceDriver.mSurface.makeCustomValueVariable('selInsertOn' + index);
+    var bypass = deviceDriver.mSurface.makeCustomValueVariable('selInsertBypass' + index);
+    page.makeValueBinding(on, viewer.mOn);
+    page.makeValueBinding(bypass, viewer.mBypass);
+    entry.surface.on = on;
+    entry.surface.bypassed = bypass;
+    viewer.mOnTitleChange = function (device, mapping, title) {
+      entry.name = title || '';
+      entry.present = !!title;
+    };
+    viewer.mOn.mOnProcessValueChange = function (device, mapping, value) {
+      entry.on = value >= 0.5;
+    };
+    viewer.mBypass.mOnProcessValueChange = function (device, mapping, value) {
+      entry.bypassed = value >= 0.5;
+    };
+    selection.inserts.push(entry);
+  }
+  //! Bank paging. A control surface reads a window; moving it is how a session
+  //! larger than the window stays reachable.
+  var bankActions = {
+    next: bank.mAction.mNextBank,
+    previous: bank.mAction.mPrevBank,
+    right: bank.mAction.mShiftRight,
+    left: bank.mAction.mShiftLeft,
+    reset: bank.mAction.mResetBank,
+  };
+  //! Commands are bound once, ahead of any request: the API binds a surface
+  //! value to a command name, and triggering that value is how the command runs.
+  var commandValues = {};
+  for (var command = 0; command < COMMANDS.length; command++) bindCommand(COMMANDS[command]);
+  function bindCommand(entry) {
+    var surface = deviceDriver.mSurface.makeCustomValueVariable('cmd_' + entry.id);
+    page.makeCommandBinding(surface, entry.category, entry.name);
+    commandValues[entry.id] = surface;
   }
   function bindChannel(channel, entry) {
     channel.mInstrumentPluginSlot.mOnTitleChange = function (device, mapping, title) {
@@ -284,11 +493,31 @@ if (api) {
     channel.mValue.mSolo.mOnProcessValueChange = function (device, mapping, value) {
       entry.solo = value >= 0.5;
     };
+    channel.mValue.mPan.mOnProcessValueChange = function (device, mapping, value) {
+      entry.pan = value;
+    };
+    channel.mValue.mRecordEnable.mOnProcessValueChange = function (device, mapping, value) {
+      entry.armed = value >= 0.5;
+    };
+    channel.mValue.mMonitorEnable.mOnProcessValueChange = function (device, mapping, value) {
+      entry.monitoring = value >= 0.5;
+    };
+    channel.mValue.mSelected.mOnProcessValueChange = function (device, mapping, value) {
+      entry.selected = value >= 0.5;
+      session.revision++;
+    };
   }
 
   // Project state is what Cubase last reported, never what this script assumed:
   // tempo and transport arrive through host callbacks.
-  var session = { device: null, mapping: null, tempo: 120, playing: false, revision: 0 };
+  var session = {
+    device: null,
+    mapping: null,
+    tempo: 120,
+    playing: false,
+    revision: 0,
+    bankOffset: 0,
+  };
   transport.mTimeDisplay.mOnChangeTempoBPM = function (activeDevice, activeMapping, tempoBPM) {
     session.tempo = tempoBPM;
     session.revision++;
@@ -318,6 +547,63 @@ if (api) {
       entry.quick[index].value = value;
     };
   }
+  function writeFields(entry, args, fields) {
+    for (var index = 0; index < fields.length; index++) {
+      var field = fields[index];
+      if (args[field] === undefined) continue;
+      var numeric =
+        field === 'gain' || field === 'frequency' || field === 'q' || field === 'level'
+          ? args[field]
+          : args[field]
+            ? 1
+            : 0;
+      entry.surface[field].setProcessValue(session.device, numeric);
+      entry[field] = typeof args[field] === 'boolean' ? !!args[field] : numeric;
+    }
+  }
+  function readSelection() {
+    var eq = [];
+    for (var b = 0; b < selection.eq.length; b++)
+      eq.push({
+        band: selection.eq[b].band,
+        on: selection.eq[b].on,
+        gain: clamp(selection.eq[b].gain),
+        frequency: clamp(selection.eq[b].frequency),
+        q: clamp(selection.eq[b].q),
+      });
+    var sends = [];
+    for (var s = 0; s < selection.sends.length; s++)
+      sends.push({
+        slot: selection.sends[s].slot,
+        on: selection.sends[s].on,
+        level: clamp(selection.sends[s].level),
+        preFader: selection.sends[s].preFader,
+      });
+    var inserts = [];
+    for (var i = 0; i < selection.inserts.length; i++)
+      //! An empty slot is not reported as a nameless insert.
+      if (selection.inserts[i].present)
+        inserts.push({
+          slot: selection.inserts[i].slot,
+          name: selection.inserts[i].name,
+          on: selection.inserts[i].on,
+          bypassed: selection.inserts[i].bypassed,
+        });
+    var selectedId = '';
+    for (var c = 0; c < channels.length; c++)
+      if (channels[c].present && channels[c].selected) selectedId = channels[c].id;
+    return {
+      trackId: selectedId || 'selected',
+      name: selection.name,
+      automation: { read: selection.automation.read, write: selection.automation.write },
+      eq: eq,
+      sends: sends,
+      inserts: inserts,
+    };
+  }
+  function clamp(value) {
+    return Math.max(0, Math.min(1, value));
+  }
   function requireSession() {
     if (!session.device || !session.mapping)
       throw new Error('The OrchestrAI mapping page is not active in Cubase.');
@@ -325,6 +611,9 @@ if (api) {
   var hostSurface = {
     daw: function () {
       return 'Cubase (MIDI Remote)';
+    },
+    revision: function () {
+      return session.revision;
     },
     readProject: function () {
       var tracks = [];
@@ -346,6 +635,10 @@ if (api) {
           mute: entry.mute,
           solo: entry.solo,
           volume: Math.max(0, Math.min(1, entry.volume)),
+          pan: Math.max(0, Math.min(1, entry.pan)),
+          recordEnabled: entry.armed,
+          monitoring: entry.monitoring,
+          selected: entry.selected,
           plugin: entry.plugin.present
             ? { name: entry.plugin.name, bypassed: entry.plugin.bypassed, quickControls: controls }
             : null,
@@ -362,7 +655,76 @@ if (api) {
         tracks: tracks,
         // Every channel reported means the project may hold more than the bank.
         tracksTruncated: tracks.length >= BANK_SIZE,
+        // The window this surface is reading, so a session larger than the bank
+        // is described rather than silently cut off at its edge.
+        bank: { offset: session.bankOffset, size: BANK_SIZE, total: null },
+        selectedChannel: selection.present ? readSelection() : null,
       };
+    },
+    pageBank: function (direction) {
+      requireSession();
+      var action = bankActions[direction];
+      if (!action) throw new Error('Unknown bank direction "' + direction + '".');
+      action.trigger(session.mapping);
+      // The host reports the channels it moved to through the usual callbacks;
+      // the offset is this script's own count of how far it has asked to move.
+      if (direction === 'next') session.bankOffset += BANK_SIZE;
+      if (direction === 'previous')
+        session.bankOffset = Math.max(0, session.bankOffset - BANK_SIZE);
+      if (direction === 'right') session.bankOffset += 1;
+      if (direction === 'left') session.bankOffset = Math.max(0, session.bankOffset - 1);
+      if (direction === 'reset') session.bankOffset = 0;
+      session.revision++;
+    },
+    runCommand: function (id) {
+      requireSession();
+      var entry = null;
+      for (var index = 0; index < COMMANDS.length; index++)
+        if (COMMANDS[index].id === id) entry = COMMANDS[index];
+      if (!entry) throw new Error('Command "' + id + '" is not one this bridge will run.');
+      var value = commandValues[entry.id];
+      // A bound command reads as a button press: raise it, then release it.
+      value.setProcessValue(session.device, 1);
+      value.setProcessValue(session.device, 0);
+      session.revision++;
+      return { id: entry.id, name: entry.name, dialog: entry.dialog };
+    },
+    setSelectedChannel: function (tool, args) {
+      requireSession();
+      if (!selection.present) throw new Error('No track is selected in Cubase.');
+      if (tool === 'channel.set_automation') {
+        if (args.read !== undefined) {
+          selection.surface.read.setProcessValue(session.device, args.read ? 1 : 0);
+          selection.automation.read = !!args.read;
+        }
+        if (args.write !== undefined) {
+          selection.surface.write.setProcessValue(session.device, args.write ? 1 : 0);
+          selection.automation.write = !!args.write;
+        }
+      }
+      if (tool === 'channel.set_eq_band') {
+        var band = null;
+        for (var b = 0; b < selection.eq.length; b++)
+          if (selection.eq[b].band === args.band) band = selection.eq[b];
+        if (!band) throw new Error('This channel has no EQ band ' + args.band + '.');
+        writeFields(band, args, ['on', 'gain', 'frequency', 'q']);
+      }
+      if (tool === 'channel.set_send') {
+        var send = null;
+        for (var sl = 0; sl < selection.sends.length; sl++)
+          if (selection.sends[sl].slot === args.slot) send = selection.sends[sl];
+        if (!send) throw new Error('This channel has no send slot ' + args.slot + '.');
+        writeFields(send, args, ['on', 'level', 'preFader']);
+      }
+      if (tool === 'channel.set_insert') {
+        var insert = null;
+        for (var i = 0; i < selection.inserts.length; i++)
+          if (selection.inserts[i].slot === args.slot) insert = selection.inserts[i];
+        if (!insert) throw new Error('This channel has no insert slot ' + args.slot + '.');
+        if (!insert.present) throw new Error('Insert slot ' + args.slot + ' is empty.');
+        writeFields(insert, args, ['on', 'bypassed']);
+      }
+      session.revision++;
     },
     setPlugin: function (tool, args) {
       requireSession();
@@ -390,16 +752,17 @@ if (api) {
       var entry = null;
       for (var index = 0; index < channels.length; index++)
         if (channels[index].id === trackId && channels[index].present) entry = channels[index];
-      if (!entry) throw new Error('This session has no track "' + trackId + '".');
-      var surfaceValue =
-        field === 'volume'
-          ? entry.surface.volume
-          : field === 'mute'
-            ? entry.surface.mute
-            : entry.surface.solo;
-      var numeric = field === 'volume' ? value : value ? 1 : 0;
+      if (!entry)
+        throw new Error(
+          'This bank is not showing a track "' + trackId + '". Page the mixer to reach it.',
+        );
+      var surfaceValue = entry.surface[field];
+      if (!surfaceValue) throw new Error('Unknown channel field "' + field + '".');
+      //! Continuous fields carry their value; the rest are switches.
+      var continuous = field === 'volume' || field === 'pan';
+      var numeric = continuous ? value : value ? 1 : 0;
       surfaceValue.setProcessValue(session.device, numeric);
-      entry[field] = field === 'volume' ? numeric : numeric >= 0.5;
+      entry[field] = continuous ? numeric : numeric >= 0.5;
       session.revision++;
     },
     setTempo: function (tempo) {

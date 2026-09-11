@@ -158,7 +158,8 @@ describe.skipIf(!backendPresent)('live bridge over real MIDI', () => {
       .parse(await db.execute({ type: 'history' }))
       .activities.find((candidate) => candidate.id === activity.id);
     expect(settled?.status).toBe('failed');
-    expect(settled?.detail).toMatch(/no track/);
+    // The bank is a window, so an unreachable track says which problem it is.
+    expect(settled?.detail).toMatch(/not showing a track/);
   }, 30000);
 
   it('reads a plugin and its mapped quick controls over real MIDI', async () => {
@@ -211,6 +212,88 @@ describe.skipIf(!backendPresent)('live bridge over real MIDI', () => {
     expect(settled?.detail).toMatch(/not mapped/);
   }, 30000);
 
+  it('reads the selected channel and writes its EQ over real MIDI', async () => {
+    const channel = (await runtime.state()).project!.selectedChannel;
+    expect(channel).toMatchObject({ name: 'Kick' });
+    expect(channel!.eq).toHaveLength(4);
+    expect(channel!.inserts).toEqual([{ slot: 0, name: 'Compressor', on: true, bypassed: false }]);
+    const raw = await runtime.call('channel.set_eq_band', { band: 2, gain: 0.3, on: true }, 'live');
+    const activity = activitySchema.parse(
+      JSON.parse((raw.content as { type: string; text: string }[])[0].text),
+    );
+    await runtime.control({
+      type: 'decision',
+      decision: { id: activity.id, sessionId: activity.sessionId, approve: true },
+    });
+    // The bytes reached the driver and it drove the bound surface values.
+    const writes = peerLog()
+      .filter((entry) => entry.call === 'setProcessValue')
+      .filter((entry) => String(entry.name).startsWith('selEq1'));
+    expect(writes.map((entry) => [entry.name, entry.value])).toEqual([
+      ['selEq1on', 1],
+      ['selEq1gain', 0.3],
+    ]);
+    const after = (await runtime.state()).project!.selectedChannel!.eq.find(
+      (band) => band.band === 2,
+    );
+    expect(after).toMatchObject({ on: true, gain: 0.3 });
+  }, 30000);
+
+  it('pages the mixer bank over real MIDI and reports the window', async () => {
+    const raw = await runtime.call('mixer.page', { direction: 'next' }, 'live');
+    const activity = activitySchema.parse(
+      JSON.parse((raw.content as { type: string; text: string }[])[0].text),
+    );
+    await runtime.control({
+      type: 'decision',
+      decision: { id: activity.id, sessionId: activity.sessionId, approve: true },
+    });
+    // The host's own bank action moved, and the reported window says where.
+    expect(
+      peerLog()
+        .filter((entry) => entry.call === 'bank')
+        .at(-1),
+    ).toMatchObject({
+      name: 'next',
+    });
+    expect((await runtime.state()).project?.bank).toMatchObject({ offset: 16, size: 16 });
+    const back = await runtime.call('mixer.page', { direction: 'reset' }, 'live');
+    const reset = activitySchema.parse(
+      JSON.parse((back.content as { type: string; text: string }[])[0].text),
+    );
+    await runtime.control({
+      type: 'decision',
+      decision: { id: reset.id, sessionId: reset.sessionId, approve: true },
+    });
+    expect((await runtime.state()).project?.bank?.offset).toBe(0);
+  }, 30000);
+
+  it('runs an allowlisted command and refuses one outside it, over real MIDI', async () => {
+    // Classified the same way on the live bridge as in the mock, so a command
+    // can never be the one write that runs unattended.
+    const capability = (await runtime.state()).capabilities.find(
+      (entry) => entry.id === 'host.run_command',
+    );
+    expect(capability).toMatchObject({ risk: 'destructive', support: 'bridge' });
+    const raw = await runtime.call('host.run_command', { command: 'save' }, 'live');
+    const activity = activitySchema.parse(
+      JSON.parse((raw.content as { type: string; text: string }[])[0].text),
+    );
+    // The approval names what the command will act on, since it takes no
+    // arguments of its own.
+    expect(activity.detail).toContain('"Kick"');
+    await runtime.control({
+      type: 'decision',
+      decision: { id: activity.id, sessionId: activity.sessionId, approve: true },
+    });
+    const pressed = peerLog()
+      .filter((entry) => entry.call === 'setProcessValue')
+      .filter((entry) => entry.name === 'cmd_save');
+    expect(pressed.map((entry) => entry.value)).toEqual([1, 0]);
+    // A command outside the allowlist never becomes a request at all.
+    const refused = await runtime.call('host.run_command', { command: 'quit' }, 'live');
+    expect(refused.isError).toBe(true);
+  }, 30000);
   it('drives transport through the bound surface value and survives disconnect', async () => {
     await runtime.call('transport.play', {}, 'live');
     const activity = activitySchema.parse(

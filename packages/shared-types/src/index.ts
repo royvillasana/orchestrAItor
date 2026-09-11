@@ -200,6 +200,12 @@ export const projectSchema = z
           // mean guessing at Steinberg's taper, and a wrong dB figure reads as
           // authoritative in a way a normalized one does not.
           volume: z.number().min(0).max(1),
+          /** Normalized like volume: 0 hard left, 0.5 centre, 1 hard right. */
+          pan: z.number().min(0).max(1).optional(),
+          /** Armed for recording, input monitoring, and the host's selection. */
+          recordEnabled: z.boolean().optional(),
+          monitoring: z.boolean().optional(),
+          selected: z.boolean().optional(),
           /** The instrument plugin on this channel, where the session has one. */
           plugin: z
             .object({
@@ -229,6 +235,71 @@ export const projectSchema = z
     ),
     /** True when the session has more channels than the reported bank covers. */
     tracksTruncated: z.boolean().optional(),
+    /**
+     * Which channels the mixer bank is showing. A control surface reads a
+     * window, not a project, so the window is reported rather than implied.
+     */
+    bank: z
+      .object({
+        offset: z.number().int().nonnegative(),
+        size: z.number().int().positive().max(64),
+        /** What the session reports it has, where the host says; null when it does not. */
+        total: z.number().int().nonnegative().nullable(),
+      })
+      .strict()
+      .optional(),
+    /**
+     * The depth the API exposes for one channel at a time: EQ, sends, inserts
+     * and automation arm belong to the selected track, not to the bank.
+     */
+    selectedChannel: z
+      .object({
+        trackId: idSchema,
+        name: z.string().max(120),
+        automation: z.object({ read: z.boolean(), write: z.boolean() }).strict(),
+        eq: z
+          .array(
+            z
+              .object({
+                band: z.number().int().min(1).max(4),
+                on: z.boolean(),
+                /** Normalized, like every other continuous value here. */
+                gain: z.number().min(0).max(1),
+                frequency: z.number().min(0).max(1),
+                q: z.number().min(0).max(1),
+              })
+              .strict(),
+          )
+          .max(4),
+        sends: z
+          .array(
+            z
+              .object({
+                slot: z.number().int().min(0).max(15),
+                on: z.boolean(),
+                level: z.number().min(0).max(1),
+                /** True where the send is taken before the fader. */
+                preFader: z.boolean(),
+              })
+              .strict(),
+          )
+          .max(16),
+        inserts: z
+          .array(
+            z
+              .object({
+                slot: z.number().int().min(0).max(15),
+                name: z.string().max(120),
+                on: z.boolean(),
+                bypassed: z.boolean(),
+              })
+              .strict(),
+          )
+          .max(16),
+      })
+      .strict()
+      .nullable()
+      .optional(),
   })
   .strict();
 export type ProjectState = z.infer<typeof projectSchema>;
@@ -243,6 +314,16 @@ export const toolNames = [
   'track.set_solo',
   'plugin.set_bypass',
   'plugin.set_quick_control',
+  'track.set_pan',
+  'track.set_record_enable',
+  'track.set_monitor',
+  'track.select',
+  'channel.set_eq_band',
+  'channel.set_send',
+  'channel.set_insert',
+  'channel.set_automation',
+  'mixer.page',
+  'host.run_command',
   'samples.search',
   'samples.stats',
   'midi.create_clip',
@@ -265,6 +346,80 @@ export const argumentsSchema = z.record(z.unknown()).refine((value) => {
     return false;
   }
 }, 'Tool arguments must be serializable and no larger than 8 KB.');
+/**
+ * The Cubase commands this project will run, and no others. A command takes no
+ * arguments and acts on whatever is selected, so the allowlist is the safety
+ * boundary: a name that is not here cannot be reached from a session at all.
+ *
+ * Names are Cubase's own, as they appear in Key Commands. Ones marked `dialog`
+ * open a window this API cannot answer, so they are reported as opened rather
+ * than as done.
+ */
+export const HOST_COMMANDS = [
+  { id: 'save', category: 'File', name: 'Save', label: 'Save the project', dialog: false },
+  { id: 'undo', category: 'Edit', name: 'Undo', label: 'Undo in Cubase', dialog: false },
+  { id: 'redo', category: 'Edit', name: 'Redo', label: 'Redo in Cubase', dialog: false },
+  {
+    id: 'record',
+    category: 'Transport',
+    name: 'Record',
+    label: 'Start recording',
+    dialog: false,
+  },
+  {
+    id: 'duplicate_tracks',
+    category: 'Project',
+    name: 'Duplicate Tracks',
+    label: 'Duplicate the selected tracks',
+    dialog: false,
+  },
+  {
+    id: 'remove_tracks',
+    category: 'Project',
+    name: 'Remove Selected Tracks',
+    label: 'Remove the selected tracks',
+    dialog: false,
+  },
+  {
+    id: 'add_group_track',
+    category: 'Project',
+    name: 'Add Track To Selected: Group Channel',
+    label: 'Add a group channel',
+    dialog: false,
+  },
+  {
+    id: 'add_fx_track',
+    category: 'Project',
+    name: 'Add Track To Selected: FX Channel',
+    label: 'Add an FX channel',
+    dialog: false,
+  },
+  {
+    id: 'rename_track',
+    category: 'Project',
+    name: 'Rename First Selected Track',
+    label: 'Open the rename dialog for the selected track',
+    dialog: true,
+  },
+  {
+    id: 'export_mixdown',
+    category: 'File',
+    name: 'Export Audio Mixdown',
+    label: 'Open the export dialog',
+    dialog: true,
+  },
+  {
+    id: 'import_midi',
+    category: 'File',
+    name: 'Import MIDI File',
+    label: 'Open the MIDI import dialog',
+    dialog: true,
+  },
+] as const;
+export const hostCommandSchema = z.enum(
+  HOST_COMMANDS.map((command) => command.id) as unknown as [string, ...string[]],
+);
+export const hostCommand = (id: string) => HOST_COMMANDS.find((command) => command.id === id);
 export const toolSchemas = {
   'project.get_state': emptySchema,
   'project.get_tempo': emptySchema,
@@ -282,6 +437,64 @@ export const toolSchemas = {
       value: z.number().min(0).max(1),
     })
     .strict(),
+  'track.set_pan': z.object({ trackId: idSchema, pan: z.number().min(0).max(1) }).strict(),
+  'track.set_record_enable': z.object({ trackId: idSchema, armed: z.boolean() }).strict(),
+  'track.set_monitor': z.object({ trackId: idSchema, monitoring: z.boolean() }).strict(),
+  'track.select': z.object({ trackId: idSchema }).strict(),
+  // EQ, sends and automation belong to the selected track: that is where the
+  // API puts them, so a change means selecting a track first.
+  'channel.set_eq_band': z
+    .object({
+      band: z.number().int().min(1).max(4),
+      on: z.boolean().optional(),
+      gain: z.number().min(0).max(1).optional(),
+      frequency: z.number().min(0).max(1).optional(),
+      q: z.number().min(0).max(1).optional(),
+    })
+    .strict()
+    .refine(
+      (value) =>
+        value.on !== undefined ||
+        value.gain !== undefined ||
+        value.frequency !== undefined ||
+        value.q !== undefined,
+      'Name at least one band value to change.',
+    ),
+  'channel.set_send': z
+    .object({
+      slot: z.number().int().min(0).max(15),
+      on: z.boolean().optional(),
+      level: z.number().min(0).max(1).optional(),
+      preFader: z.boolean().optional(),
+    })
+    .strict()
+    .refine(
+      (value) =>
+        value.on !== undefined || value.level !== undefined || value.preFader !== undefined,
+      'Name at least one send value to change.',
+    ),
+  'channel.set_insert': z
+    .object({
+      slot: z.number().int().min(0).max(15),
+      on: z.boolean().optional(),
+      bypassed: z.boolean().optional(),
+    })
+    .strict()
+    .refine(
+      (value) => value.on !== undefined || value.bypassed !== undefined,
+      'Name at least one insert value to change.',
+    ),
+  'channel.set_automation': z
+    .object({ read: z.boolean().optional(), write: z.boolean().optional() })
+    .strict()
+    .refine(
+      (value) => value.read !== undefined || value.write !== undefined,
+      'Name at least one automation arm to change.',
+    ),
+  'mixer.page': z
+    .object({ direction: z.enum(['next', 'previous', 'left', 'right', 'reset']) })
+    .strict(),
+  'host.run_command': z.object({ command: hostCommandSchema }).strict(),
   'samples.search': z
     .object({
       query: z.string().trim().max(120).optional(),

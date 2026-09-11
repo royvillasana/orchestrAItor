@@ -53,7 +53,15 @@ function makeApi() {
               mOnProcessValueChange: null,
             }));
             const channel = {
-              mValue: { mVolume: makeHostValue(), mMute: makeHostValue(), mSolo: makeHostValue() },
+              mValue: {
+                mVolume: makeHostValue(),
+                mMute: makeHostValue(),
+                mSolo: makeHostValue(),
+                mPan: makeHostValue(),
+                mRecordEnable: makeHostValue(),
+                mMonitorEnable: makeHostValue(),
+                mSelected: makeHostValue(),
+              },
               mQuickControls: { getByIndex: (index) => quickControls[index] },
               mInstrumentPluginSlot: {
                 mOn: makeHostValue(),
@@ -67,6 +75,58 @@ function makeApi() {
             return channel;
           },
         };
+        // The bank's own paging actions, recorded so a test can see which one
+        // the script triggered.
+        const action = (name) => ({
+          trigger: (mapping) => log.push({ call: 'bank', name, mapping }),
+        });
+        bankZone.mAction = {
+          mNextBank: action('next'),
+          mPrevBank: action('previous'),
+          mShiftLeft: action('left'),
+          mShiftRight: action('right'),
+          mResetBank: action('reset'),
+        };
+        // The selected track, where the API puts EQ, sends and inserts.
+        const eqBand = () => ({
+          mOn: makeHostValue(),
+          mGain: makeHostValue(),
+          mFreq: makeHostValue(),
+          mQ: makeHostValue(),
+        });
+        const sendSlots = Array.from({ length: 4 }, () => ({
+          mOn: makeHostValue(),
+          mLevel: makeHostValue(),
+          mPrePost: makeHostValue(),
+        }));
+        const inserts = [];
+        const selectedChannel = {
+          mOnTitleChange: null,
+          mValue: { mAutomationRead: makeHostValue(), mAutomationWrite: makeHostValue() },
+          mChannelEQ: { mBand1: eqBand(), mBand2: eqBand(), mBand3: eqBand(), mBand4: eqBand() },
+          mSends: {
+            getNumberOfSendSlots: () => sendSlots.length,
+            getByIndex: (index) => sendSlots[index],
+          },
+          mInsertAndStripEffects: {
+            makeInsertEffectViewer: (name) => {
+              const viewer = {
+                name,
+                mOn: makeHostValue(),
+                mBypass: makeHostValue(),
+                mOnTitleChange: null,
+                accessSlotAtIndex: (index) => {
+                  viewer.slot = index;
+                  return viewer;
+                },
+              };
+              inserts.push(viewer);
+              return viewer;
+            },
+          },
+        };
+        driver._selected = selectedChannel;
+        driver._inserts = inserts;
         for (const include of [
           'includeAudioChannels',
           'includeInstrumentChannels',
@@ -81,9 +141,17 @@ function makeApi() {
           mHostAccess: {
             mTransport: transport,
             mMixConsole: { makeMixerBankZone: () => bankZone },
+            mTrackSelection: { mMixerChannel: selectedChannel },
           },
           makeValueBinding: (surfaceValue, hostValue) =>
             log.push({ call: 'makeValueBinding', surfaceValue: surfaceValue.name, hostValue }),
+          makeCommandBinding: (surfaceValue, commandCategory, commandName) =>
+            log.push({
+              call: 'makeCommandBinding',
+              surfaceValue: surfaceValue.name,
+              commandCategory,
+              commandName,
+            }),
           mOnActivate: null,
           mOnDeactivate: null,
         });

@@ -143,9 +143,14 @@ try {
   // Settings and back must not try to reconnect the session it is already in.
   await page.getByLabel('Connection settings').click();
   await page.getByRole('heading', { name: 'Your next idea starts here.' }).waitFor();
-  const backLabel = await page
-    .getByRole('button', { name: /Back to the studio|Open demo studio/ })
-    .innerText();
+  // The renderer polls, so the button label follows the runtime rather than
+  // matching it the instant the screen renders.
+  const backLabel = await until(
+    page,
+    () => document.querySelector('button.bg-accent')?.textContent ?? '',
+    (label) => !!label && /Back to the studio|Open demo studio/.test(label),
+    { timeout: 10000, label: 'the connect button to settle' },
+  );
   assert.match(backLabel, /Back to the studio/, 'A connected session should offer to go back.');
   await page.getByRole('button', { name: /Back to the studio/ }).click();
   await page.getByRole('heading', { name: 'Studio conversation' }).waitFor();

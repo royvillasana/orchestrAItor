@@ -9,6 +9,8 @@ import type { MidiTransport } from './transport';
  */
 export interface ScriptHostSurface {
   daw(): string;
+  /** Cheap enough to poll: the caller reads state only when this changes. */
+  revision(): number;
   readProject(): unknown;
   setTempo(tempo: number): void;
   setPlaying(playing: boolean): void;
@@ -34,6 +36,8 @@ export class SimulatedCubasePeer {
   private unsubscribe: (() => void) | null = null;
   /** Set to drop responses, standing in for a MIDI message that never arrives. */
   silent = false;
+  /** Set to observe what the bridge actually asks for over the wire. */
+  onRequest: ((request: unknown) => void) | null = null;
   constructor(
     private transport: MidiTransport,
     private handle: ScriptHandler,
@@ -53,7 +57,9 @@ export class SimulatedCubasePeer {
     if (!decoded.ok || decoded.frame.kind !== 'request' || this.silent) return;
     let response: unknown;
     try {
-      response = this.handle(JSON.parse(decoded.frame.payload));
+      const request = JSON.parse(decoded.frame.payload);
+      this.onRequest?.(request);
+      response = this.handle(request);
     } catch {
       response = { ok: false, error: 'Malformed request payload.' };
     }
@@ -73,6 +79,7 @@ export function createFixtureScriptHost(
   return {
     state,
     daw: () => daw,
+    revision: () => state.revision,
     readProject: () => ({
       name: 'Live session',
       tempo: state.tempo,

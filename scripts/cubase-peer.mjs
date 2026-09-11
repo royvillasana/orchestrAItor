@@ -17,7 +17,7 @@ import path from 'node:path';
 const require_ = createRequire(import.meta.url);
 /** What a small session looks like once Cubase has filled the bank. */
 export const DEFAULT_TRACKS = [
-  { name: 'Kick', volume: 0.82, mute: false, solo: false },
+  { name: 'Kick', volume: 0.82, mute: false, solo: false, pan: 0.5, selected: true },
   {
     name: 'Sub bass',
     volume: 0.6,
@@ -80,6 +80,10 @@ export async function startCubasePeer({ tempo = 120, tracks = DEFAULT_TRACKS } =
     channel.mValue.mVolume.mOnProcessValueChange(device, mapping, track.volume);
     channel.mValue.mMute.mOnProcessValueChange(device, mapping, track.mute ? 1 : 0);
     channel.mValue.mSolo.mOnProcessValueChange(device, mapping, track.solo ? 1 : 0);
+    channel.mValue.mPan.mOnProcessValueChange(device, mapping, track.pan ?? 0.5);
+    channel.mValue.mRecordEnable.mOnProcessValueChange(device, mapping, track.armed ? 1 : 0);
+    channel.mValue.mMonitorEnable.mOnProcessValueChange(device, mapping, track.monitoring ? 1 : 0);
+    channel.mValue.mSelected.mOnProcessValueChange(device, mapping, track.selected ? 1 : 0);
     if (track.plugin) {
       channel.mInstrumentPluginSlot.mOnTitleChange(device, mapping, track.plugin);
       for (const control of track.quickControls ?? []) {
@@ -89,6 +93,26 @@ export async function startCubasePeer({ tempo = 120, tracks = DEFAULT_TRACKS } =
       }
     }
   });
+
+  // Cubase reporting the selected channel's depth, as it does when a track is
+  // selected: the EQ bands, sends and inserts the surface then addresses.
+  const selectedTrack = tracks.find((track) => track.selected) ?? tracks[0];
+  const selected = api.driver._selected;
+  if (selectedTrack) {
+    selected.mOnTitleChange(device, mapping, selectedTrack.name);
+    for (const band of selectedTrack.eq ?? [{ band: 1, gain: 0.55, frequency: 0.2, on: true }]) {
+      const host = selected.mChannelEQ[`mBand${band.band}`];
+      host.mOn.mOnProcessValueChange(device, mapping, band.on ? 1 : 0);
+      host.mGain.mOnProcessValueChange(device, mapping, band.gain ?? 0.5);
+      host.mFreq.mOnProcessValueChange(device, mapping, band.frequency ?? 0.5);
+      host.mQ.mOnProcessValueChange(device, mapping, band.q ?? 0.5);
+    }
+    const insert = api.driver._inserts[0];
+    if (insert) {
+      insert.mOnTitleChange(device, mapping, selectedTrack.insert ?? 'Compressor');
+      insert.mOn.mOnProcessValueChange(device, mapping, 1);
+    }
+  }
 
   const sent = [];
   api.driver._output.sendMidi = (_device, message) => {
@@ -103,6 +127,8 @@ export async function startCubasePeer({ tempo = 120, tracks = DEFAULT_TRACKS } =
     portName: PORT_NAME,
     /** Cubase's transport reporting back, as it would after a real edit. */
     reportTempo: (bpm) => transport.mTimeDisplay.mOnChangeTempoBPM(device, mapping, bpm),
+    /** Cubase reporting a different track selected, as a producer's click would. */
+    reportSelection: (name) => selected.mOnTitleChange(device, mapping, name),
     stop: () => {
       input.closePort();
       output.closePort();

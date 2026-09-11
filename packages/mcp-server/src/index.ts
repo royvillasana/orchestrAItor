@@ -1,7 +1,7 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { Orchestrator } from '@orchestrai/orchestrator';
-import { idSchema, errorText, toolNameSchema } from '@orchestrai/shared-types';
+import { idSchema, errorText, toolNameSchema, HOST_COMMANDS } from '@orchestrai/shared-types';
 
 export async function availableToolDefinitions(orchestrator: Orchestrator) {
   const descriptions: Partial<Record<string, string>> = {
@@ -16,6 +16,22 @@ export async function availableToolDefinitions(orchestrator: Orchestrator) {
       "Bypass or un-bypass a track's instrument plugin. Requires approval in Assist.",
     'plugin.set_quick_control':
       "Set one of a track's quick controls, 0 to 1. Quick controls are the parameters the producer has mapped in Cubase; other plugin parameters are not reachable. Requires approval in Assist.",
+    'track.set_pan': "Set one track's pan, 0 hard left to 1 hard right. Approval in Assist.",
+    'track.set_record_enable': 'Arm or disarm one track for recording. Approval in Assist.',
+    'track.set_monitor': 'Turn input monitoring on or off for one track. Approval in Assist.',
+    'track.select':
+      'Select one track in Cubase. EQ, sends, inserts and automation apply to the selected track, so select it before changing any of those. Approval in Assist.',
+    'channel.set_eq_band':
+      "Set a band of the selected track's channel EQ: on, gain, frequency, or Q, each 0 to 1. Select the track first. Approval in Assist.",
+    'channel.set_send':
+      'Set a send slot on the selected track: on, level 0 to 1, or pre/post fader. Select the track first. Approval in Assist.',
+    'channel.set_insert':
+      'Switch on or bypass an insert already loaded on the selected track. Loading, replacing or removing a plugin is not reachable. Approval in Assist.',
+    'channel.set_automation':
+      "Arm the selected track's automation read or write. Approval in Assist.",
+    'mixer.page':
+      'Move the sixteen-channel window over the session. Use when project.get_state reports the session is truncated and the track you want is not listed.',
+    'host.run_command': `Run one Cubase command from a fixed list: ${HOST_COMMANDS.map((command) => command.id).join(', ')}. A command takes no arguments and acts on whatever is currently selected, so select the track first and expect the producer to check the selection. Commands marked as opening a dialog cannot be completed from here. Always requires approval.`,
     'midi.create_clip':
       'Generate a MIDI clip — chords, bass, or drums — as a file the producer drags onto a track. Key, scale, and tempo default to the connected session. This writes a file; it does not change the project, and it requires user approval in Assist.',
   };
@@ -91,6 +107,101 @@ export async function availableToolDefinitions(orchestrator: Orchestrator) {
         },
       },
       required: ['trackId', 'index', 'value'],
+      additionalProperties: false,
+    },
+    'track.set_pan': {
+      type: 'object' as const,
+      properties: {
+        trackId: { type: 'string', description: 'The id from project.get_state.' },
+        pan: { type: 'number', minimum: 0, maximum: 1, description: '0.5 is centre.' },
+      },
+      required: ['trackId', 'pan'],
+      additionalProperties: false,
+    },
+    'track.set_record_enable': {
+      type: 'object' as const,
+      properties: {
+        trackId: { type: 'string', description: 'The id from project.get_state.' },
+        armed: { type: 'boolean' },
+      },
+      required: ['trackId', 'armed'],
+      additionalProperties: false,
+    },
+    'track.set_monitor': {
+      type: 'object' as const,
+      properties: {
+        trackId: { type: 'string', description: 'The id from project.get_state.' },
+        monitoring: { type: 'boolean' },
+      },
+      required: ['trackId', 'monitoring'],
+      additionalProperties: false,
+    },
+    'track.select': {
+      type: 'object' as const,
+      properties: { trackId: { type: 'string', description: 'The id from project.get_state.' } },
+      required: ['trackId'],
+      additionalProperties: false,
+    },
+    'channel.set_eq_band': {
+      type: 'object' as const,
+      properties: {
+        band: { type: 'number', minimum: 1, maximum: 4, description: 'Bands are numbered 1 to 4.' },
+        on: { type: 'boolean' },
+        gain: { type: 'number', minimum: 0, maximum: 1, description: 'Normalized, not dB.' },
+        frequency: { type: 'number', minimum: 0, maximum: 1, description: 'Normalized, not Hz.' },
+        q: { type: 'number', minimum: 0, maximum: 1 },
+      },
+      required: ['band'],
+      additionalProperties: false,
+    },
+    'channel.set_send': {
+      type: 'object' as const,
+      properties: {
+        slot: { type: 'number', minimum: 0, maximum: 15, description: 'The slot from the state.' },
+        on: { type: 'boolean' },
+        level: { type: 'number', minimum: 0, maximum: 1 },
+        preFader: { type: 'boolean' },
+      },
+      required: ['slot'],
+      additionalProperties: false,
+    },
+    'channel.set_insert': {
+      type: 'object' as const,
+      properties: {
+        slot: { type: 'number', minimum: 0, maximum: 15, description: 'The slot from the state.' },
+        on: { type: 'boolean' },
+        bypassed: { type: 'boolean' },
+      },
+      required: ['slot'],
+      additionalProperties: false,
+    },
+    'channel.set_automation': {
+      type: 'object' as const,
+      properties: { read: { type: 'boolean' }, write: { type: 'boolean' } },
+      additionalProperties: false,
+    },
+    'mixer.page': {
+      type: 'object' as const,
+      properties: {
+        direction: {
+          type: 'string',
+          enum: ['next', 'previous', 'left', 'right', 'reset'],
+          description: 'A bank moves sixteen channels; left and right move one.',
+        },
+      },
+      required: ['direction'],
+      additionalProperties: false,
+    },
+    'host.run_command': {
+      type: 'object' as const,
+      properties: {
+        command: {
+          type: 'string',
+          enum: HOST_COMMANDS.map((command) => command.id),
+          description: 'One of the allowlisted Cubase commands.',
+        },
+      },
+      required: ['command'],
       additionalProperties: false,
     },
     'midi.create_clip': {
