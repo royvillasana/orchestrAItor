@@ -211,10 +211,14 @@ export class LiveAgentProvider implements AgentProvider {
       prompt,
     ];
   }
-  async sendMessage(conversation: Conversation, tools: ToolDefinition[]): Promise<AgentResponse> {
+  async sendMessage(
+    conversation: Conversation,
+    tools: ToolDefinition[],
+    run?: RunContext,
+  ): Promise<AgentResponse> {
     await this.initialize();
     this.cancelled = false;
-    const prompt = buildPrompt(conversation, tools);
+    const prompt = buildPrompt(conversation, tools, run);
     const events: TurnEvents = { text: [], toolCalls: [], model: null, error: null };
     const read = this.id === 'codex' ? readCodexEvent : readClaudeEvent;
     const child = this.spawnProcess(this.options.executable, this.args(prompt), {
@@ -282,7 +286,16 @@ export class LiveAgentProvider implements AgentProvider {
   }
 }
 export const PROMPT_HISTORY_TURNS = 10;
-export function buildPrompt(conversation: Conversation, tools: ToolDefinition[]): string {
+export interface RunContext {
+  writesLeft: number;
+  secondsLeft: number;
+  withoutApproval: string[];
+}
+export function buildPrompt(
+  conversation: Conversation,
+  tools: ToolDefinition[],
+  run?: RunContext,
+): string {
   const names = tools.map((tool) => `mcp__${MCP_SERVER_NAME}__${tool.name}`).join(', ');
   // The conversation's own messages are the request. The title is only what the
   // first message was called, so building from it answers the wrong question on
@@ -296,7 +309,9 @@ export function buildPrompt(conversation: Conversation, tools: ToolDefinition[])
     names
       ? `Use only these tools to inspect or change the session: ${names}.`
       : 'No session tools are available right now; say so rather than guessing.',
-    'Writes require the producer to approve them in the app. If a tool reports that it is awaiting approval, say so plainly and stop; never claim a change was applied.',
+    run
+      ? `You are in an autonomous run. These tools apply immediately without asking: ${run.withoutApproval.join(', ')}. Anything else still waits for the producer's approval. You have ${run.writesLeft} change(s) and about ${Math.round(run.secondsLeft)} seconds left; when either runs out the run ends. Make only the changes the producer asked for, and say what you changed.`
+      : 'Writes require the producer to approve them in the app. If a tool reports that it is awaiting approval, say so plainly and stop; never claim a change was applied.',
     'When asked about sounds, search the local sample library rather than guessing file names, and cite the paths the search returns.',
     'Answer briefly and concretely for a musician, not a developer.',
     ...(earlier.length

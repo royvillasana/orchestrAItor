@@ -29,6 +29,7 @@ import {
   type MidiStatus,
   type ProviderId,
   type AgentProvider,
+  AGENT_MODE_TOOLS,
 } from '@orchestrai/shared-types';
 import { createMcpServer, availableToolDefinitions } from './index';
 
@@ -323,6 +324,12 @@ async function control(command: Control): Promise<unknown> {
       await server.sendToolListChanged();
       return state;
     }
+    case 'startRun':
+      return orchestration.startRun(command.budget);
+    case 'stopRun':
+      return orchestration.stopRun();
+    case 'undoRun':
+      return orchestration.undoRun(command.id, command.conversationId);
     case 'decision':
       return orchestration.decide(
         command.decision.id,
@@ -346,12 +353,28 @@ async function control(command: Control): Promise<unknown> {
         if (!conversation) throw new Error('Conversation not found.');
         agentConversationId = conversation.id;
         streamed = '';
+        // A live agent is told the limits it is working inside, so it does not
+        // have to discover them by hitting them.
+        const runState = (await orchestration.state()).run;
+        const activeRun =
+          runState && !runState.endedAt
+            ? {
+                writesLeft: runState.budget.maxWrites - runState.writes,
+                secondsLeft: Math.max(
+                  0,
+                  runState.budget.maxSeconds -
+                    (Date.now() - new Date(runState.startedAt).getTime()) / 1000,
+                ),
+                withoutApproval: [...AGENT_MODE_TOOLS],
+              }
+            : undefined;
         const response = await active.sendMessage(
           {
             ...conversation,
             messages: history.messages.filter((m) => m.conversationId === conversation.id),
           },
           await availableToolDefinitions(orchestration),
+          activeRun,
         );
         const results: Activity[] = [];
         for (const call of response.commands)

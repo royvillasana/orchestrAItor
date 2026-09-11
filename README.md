@@ -204,6 +204,23 @@ Ask for a chord progression, bassline, or drum pattern and the agent generates a
 
 Clips live under `artifacts/` in the application data directory, never in your project or sample folders, and generation never overwrites: a repeated request produces a second clip beside the first.
 
+## Agent mode
+
+Ask reads. Assist approves every write. **Agent mode** runs a bounded sequence of changes without a prompt for each one — for iterating, where approving every step is the whole interaction.
+
+It is the only path where the session changes without a prompt immediately before the change, so the guarantee moves elsewhere:
+
+- **A run, not a setting.** Agent mode is entered deliberately and a run is started explicitly with its budget. Nothing persists across restarts: a mode whose purpose is acting without asking is the one nobody should find already switched on.
+- **The budget is the bound.** A run declares how many changes it may make and how long it may take. Both are checked _before_ each write, and exhausting either ends the run with the reason. "Eight changes, two minutes" is a sentence with a worst case.
+- **A standing list, not a blanket.** Only tempo, transport, and track volume/mute/solo run without asking. Anything else — clip generation, anything new — still takes an approval, in Agent mode exactly as in Assist, and a capability classified destructive is never on the list.
+- **Stop means now.** Stop is checked before each write, so it never costs one more operation.
+- **The run is the unit of undo.** A run captures the session before it starts and offers a single undo restoring it, under the same revision check as any other undo. Undoing writes one at a time would ask a producer to reason about ordering they never watched.
+- **A failure ends the run**, rather than continuing against a session whose state is no longer known while nobody is watching.
+
+A live agent is told what it may do without asking and what remains of the budget, so it does not discover the limits by hitting them.
+
+`pnpm test:smoke-agent-mode` runs it against a live agent and the bridge: a bounded run, changes with no prompts, a stop, and a run undo. It costs model usage, so it is not part of `pnpm test`.
+
 ## Local data and recovery
 
 Data lives in Electron's OS application-data directory under `OrchestrAI`:
@@ -231,6 +248,7 @@ pnpm build
 pnpm test:smoke
 pnpm test:smoke-bridge
 pnpm test:smoke-agent
+pnpm test:smoke-agent-mode
 pnpm test:smoke-samples <folder>
 pnpm audit --prod
 ```
@@ -243,4 +261,4 @@ For development-mode smoke verification, start `pnpm --filter @orchestrai/deskto
 
 ## Next milestones
 
-API credential storage, plugin operations, autonomous Agent mode, and token-level streaming into the transcript remain separate integrations. The active implementation checklist is `openspec/changes/add-cubase-midi-bridge/tasks.md`; Milestone 1 is archived under `openspec/changes/archive/`.
+API credential storage, plugin operations, and token-level streaming into the transcript remain separate integrations. The active implementation checklist is `openspec/changes/add-cubase-midi-bridge/tasks.md`; Milestone 1 is archived under `openspec/changes/archive/`.

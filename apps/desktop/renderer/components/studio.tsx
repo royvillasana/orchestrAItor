@@ -19,6 +19,15 @@ declare global {
     orchestra?: OrchestraAPI;
   }
 }
+/** Why a run ended, in the producer's terms rather than the enum's. */
+const runEndings: Record<string, string> = {
+  'write-budget': 'change limit reached',
+  'time-budget': 'time limit reached',
+  stopped: 'you stopped it',
+  failed: 'a change failed',
+  disconnected: 'the session disconnected',
+  'mode-changed': 'the mode changed',
+};
 const smallButton =
   'rounded-lg border border-line px-3 py-2 text-xs text-muted transition hover:border-muted hover:text-paper disabled:opacity-40';
 function Mark() {
@@ -106,6 +115,8 @@ export function Studio({ setup = false }: { setup?: boolean }) {
   const [sampleQuery, setSampleQuery] = useState('');
   const [preview, setPreview] = useState<string | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
+  const [runWrites, setRunWrites] = useState(6);
+  const [runMinutes, setRunMinutes] = useState(2);
   // A continuously animating glow is not free, and this is an audio
   // application: it stops when the window is not on screen, and never runs for
   // someone who asked for reduced motion.
@@ -285,6 +296,9 @@ export function Studio({ setup = false }: { setup?: boolean }) {
   const canWrite = connected && mode === 'assist' && !busy && !data?.error;
   const providerLabel = runtime?.providerLabel ?? 'Demo agent';
   const beamActive = !reducedMotion && windowVisible;
+  const currentRun = runtime?.run ?? null;
+  const activeRun = currentRun && !currentRun.endedAt ? currentRun : null;
+  const finishedRun = currentRun?.endedAt ? currentRun : null;
   const streaming = data?.streaming ?? null;
   // A turn is live while the request is in flight or text is still arriving.
   const turnRunning = busy || !!streaming;
@@ -929,7 +943,7 @@ export function Studio({ setup = false }: { setup?: boolean }) {
               className="flex rounded-lg border border-line bg-panel p-1"
               aria-label="Agent mode"
             >
-              {(['ask', 'assist'] as const).map((m) => (
+              {(['ask', 'assist', 'agent'] as const).map((m) => (
                 <button
                   key={m}
                   disabled={busy}
@@ -941,6 +955,104 @@ export function Studio({ setup = false }: { setup?: boolean }) {
               ))}
             </div>
           </div>
+          {mode === 'agent' && (
+            <div className="shrink-0 border-b border-line bg-warm/5 px-7 py-4">
+              {!activeRun ? (
+                <div className="flex flex-wrap items-center gap-3 text-xs">
+                  <span className="text-warm">
+                    Agent mode changes tempo, transport, and track levels{' '}
+                    <strong className="font-semibold">without asking</strong>, within the limits you
+                    set here.
+                  </span>
+                  <label className="flex items-center gap-1.5 text-[11px] text-muted">
+                    <span className="sr-only">Write limit</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={50}
+                      value={runWrites}
+                      onChange={(event) => setRunWrites(Number(event.target.value))}
+                      className="w-14 rounded border border-line bg-panel px-1.5 py-1 text-[11px]"
+                    />
+                    changes
+                  </label>
+                  <label className="flex items-center gap-1.5 text-[11px] text-muted">
+                    <span className="sr-only">Time limit in minutes</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={30}
+                      value={runMinutes}
+                      onChange={(event) => setRunMinutes(Number(event.target.value))}
+                      className="w-14 rounded border border-line bg-panel px-1.5 py-1 text-[11px]"
+                    />
+                    minutes
+                  </label>
+                  <button
+                    disabled={busy || !connected}
+                    onClick={() =>
+                      void run((api) =>
+                        api.startRun({
+                          budget: {
+                            maxWrites: Math.max(1, Math.min(50, runWrites)),
+                            maxSeconds: Math.max(10, Math.min(1800, runMinutes * 60)),
+                          },
+                        }),
+                      )
+                    }
+                    className="rounded-lg bg-warm/80 px-3 py-1.5 text-[11px] font-semibold text-ink disabled:opacity-40"
+                  >
+                    Start run
+                  </button>
+                </div>
+              ) : (
+                <div className="flex flex-wrap items-center gap-3 text-xs">
+                  <span className="flex items-center gap-2 text-warm">
+                    <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-warm" />
+                    Run in progress
+                  </span>
+                  <span className="text-[11px] text-muted">
+                    {activeRun.writes} of {activeRun.budget.maxWrites} changes ·{' '}
+                    {Math.max(
+                      0,
+                      Math.ceil(
+                        activeRun.budget.maxSeconds -
+                          (Date.now() - new Date(activeRun.startedAt).getTime()) / 1000,
+                      ),
+                    )}
+                    s left
+                  </span>
+                  {/* Always reachable while a run is going. */}
+                  <button
+                    onClick={() => void run((api) => api.stopRun({}))}
+                    className="ml-auto rounded-lg border border-warm/50 px-3 py-1.5 text-[11px] text-warm"
+                  >
+                    Stop run
+                  </button>
+                </div>
+              )}
+              {finishedRun && (
+                <div className="mt-2 flex items-center gap-3 text-[11px] text-muted">
+                  <span>
+                    Run ended: {runEndings[finishedRun.endedBecause ?? 'stopped']} after{' '}
+                    {finishedRun.writes} change{finishedRun.writes === 1 ? '' : 's'}.
+                  </span>
+                  {!finishedRun.undone && (
+                    <button
+                      disabled={busy || !conversationId}
+                      onClick={() =>
+                        void run((api) => api.undoRun({ id: finishedRun.id, conversationId }))
+                      }
+                      className="rounded border border-line px-2 py-1 hover:border-muted hover:text-paper disabled:opacity-40"
+                    >
+                      Undo the run
+                    </button>
+                  )}
+                  {finishedRun.undone && <span className="text-accent">Undone.</span>}
+                </div>
+              )}
+            </div>
+          )}
           <div className="min-h-0 flex-1 overflow-y-auto px-7 py-8">
             {!messages.length ? (
               <div className="mx-auto flex h-full max-w-lg flex-col justify-center pb-6">

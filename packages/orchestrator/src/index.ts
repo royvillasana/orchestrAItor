@@ -1,7 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import {
+  type DawCommand,
   type AdapterId,
   type ProviderId,
+  type AgentRun,
+  type RunBudget,
+  runBudgetSchema,
+  AGENT_MODE_TOOLS,
   type Capability,
   localToolNames,
   isLocalTool,
@@ -42,6 +47,9 @@ export class Orchestrator {
   private calls = new Map<string, Activity>();
   private adapterId: AdapterId = 'mock';
   private samples: SampleTools | null = null;
+  private run: AgentRun | null = null;
+  private runBefore: ProjectState | null = null;
+  private finishedRuns = new Map<string, { run: AgentRun; before: ProjectState }>();
   private artifacts: ArtifactTools | null = null;
   private provider: { id: ProviderId; label: string; live: boolean } = {
     id: 'demo',
@@ -95,6 +103,7 @@ export class Orchestrator {
       provider: this.provider.id,
       providerLabel: this.provider.label,
       providerLive: this.provider.live,
+      run: this.run ? { ...this.run } : null,
     };
   }
   /** Everything the session can do, before the mode filter. */
@@ -118,7 +127,9 @@ export class Orchestrator {
   }
   async tools() {
     return (await this.capabilities()).filter(
-      (c) => c.support !== 'unsupported' && (this.mode === 'assist' || c.risk === 'read'),
+      // Ask is reads only. Assist and Agent both expose writes; what differs is
+      // whether a write waits for approval, not whether the tool exists.
+      (c) => c.support !== 'unsupported' && (this.mode !== 'ask' || c.risk === 'read'),
     );
   }
   /** Local, read-only sample search, injected so the orchestrator owns no storage. */
@@ -143,6 +154,7 @@ export class Orchestrator {
   disconnect() {
     return this.serial(async () => {
       await this.invalidate('Disconnected');
+      await this.endRun('disconnected');
       await this.adapter.disconnect();
       this.connected = false;
       return this.state();
@@ -150,13 +162,72 @@ export class Orchestrator {
   }
   setMode(mode: Mode) {
     return this.serial(async () => {
-      if (this.mode !== mode) await this.invalidate('Mode changed');
+      if (this.mode !== mode) {
+        await this.invalidate('Mode changed');
+        // A run belongs to the mode it was authorised in.
+        await this.endRun('mode-changed');
+      }
       this.mode = mode;
       return this.state();
     });
   }
+  /**
+   * A run is what Agent mode actually authorises: a bounded number of writes
+   * within a bounded time, on a named set of tools. It is granted per run and
+   * never persists, because a mode whose purpose is acting without asking is
+   * the one nobody should find already switched on.
+   */
+  startRun(budget: RunBudget) {
+    return this.serial(async () => {
+      if (this.mode !== 'agent') throw new Error('Switch to Agent mode before starting a run.');
+      if (!this.connected) throw new Error('Connect a session before starting a run.');
+      if (this.run && !this.run.endedAt) throw new Error('A run is already going.');
+      this.runBefore = await this.adapter.getProjectState();
+      this.run = {
+        id: randomUUID(),
+        budget: runBudgetSchema.parse(budget),
+        startedAt: new Date(this.now()).toISOString(),
+        writes: 0,
+        endedAt: null,
+        endedBecause: null,
+        undone: false,
+      };
+      return this.state();
+    });
+  }
+  stopRun() {
+    return this.serial(async () => {
+      await this.endRun('stopped');
+      return this.state();
+    });
+  }
+  private async endRun(reason: NonNullable<AgentRun['endedBecause']>) {
+    if (!this.run || this.run.endedAt) return;
+    this.run = { ...this.run, endedAt: new Date(this.now()).toISOString(), endedBecause: reason };
+    if (this.runBefore)
+      this.finishedRuns.set(this.run.id, { run: this.run, before: this.runBefore });
+  }
+  /** Checked before each write, never after: a budget spent afterwards is not a budget. */
+  private runAllows(): { ok: true } | { ok: false; reason: NonNullable<AgentRun['endedBecause']> } {
+    if (!this.run || this.run.endedAt) return { ok: false, reason: 'stopped' };
+    if (this.run.writes >= this.run.budget.maxWrites) return { ok: false, reason: 'write-budget' };
+    const elapsed = (this.now() - new Date(this.run.startedAt).getTime()) / 1000;
+    if (elapsed >= this.run.budget.maxSeconds) return { ok: false, reason: 'time-budget' };
+    return { ok: true };
+  }
   cancel() {
     return this.serial(() => this.invalidate('Cancelled by user'));
+  }
+  /** The tools a run may use without asking. Destructive risk is never here. */
+  private async autonomousTools(): Promise<Set<string>> {
+    const allowed = new Set<string>();
+    for (const capability of await this.capabilities())
+      if (
+        AGENT_MODE_TOOLS.includes(capability.id as (typeof AGENT_MODE_TOOLS)[number]) &&
+        capability.risk !== 'destructive'
+      )
+        allowed.add(capability.id);
+    return allowed;
   }
   private async invalidate(reason: string) {
     for (const call of this.calls.values())
@@ -212,6 +283,33 @@ export class Orchestrator {
             status: 'denied',
             detail: 'Ask mode cannot change the project. Switch to Assist to propose changes.',
           });
+        if (this.mode === 'agent') {
+          const permitted = await this.autonomousTools();
+          // Only the standing list runs without asking. Anything else takes the
+          // same approval it would in Assist, Agent mode or not.
+          if (permitted.has(tool)) {
+            const allowed = this.runAllows();
+            if (!allowed.ok) {
+              await this.endRun(allowed.reason);
+              return this.record({
+                ...call,
+                status: 'denied',
+                detail:
+                  allowed.reason === 'write-budget'
+                    ? 'The run reached its write limit. Start another run to continue.'
+                    : allowed.reason === 'time-budget'
+                      ? 'The run reached its time limit. Start another run to continue.'
+                      : 'No run is active. Start one to make changes without approval.',
+              });
+            }
+            this.run = { ...this.run!, writes: this.run!.writes + 1 };
+            const executed = await this.execute({ ...call, runId: this.run.id });
+            // A failed write ends the run: continuing would be guessing about a
+            // session whose state is no longer known, unwatched.
+            if (executed.status !== 'succeeded') await this.endRun('failed');
+            return executed;
+          }
+        }
         return this.record({
           ...call,
           status: 'awaiting-approval',
@@ -257,6 +355,69 @@ export class Orchestrator {
     } catch (error) {
       return this.record({ ...call, status: 'failed', detail: errorText(error) });
     }
+  }
+  /**
+   * Undo the run, not its writes. A producer authorised the run; asking them to
+   * reason about the ordering of writes they never watched would be a worse
+   * question than the one they actually answered.
+   */
+  undoRun(id: string, conversationId: string) {
+    return this.serial(async () => {
+      const finished = this.finishedRuns.get(id);
+      if (!finished) throw new Error('That run is not available to undo.');
+      if (finished.run.undone) throw new Error('That run has already been undone.');
+      const current = await this.adapter.getProjectState();
+      const since = this.lastWriteRevisionFor(id);
+      if (since !== null && current.revision !== since)
+        throw new Error('Undo conflict: the session has changed since that run.');
+      const before = finished.before;
+      const steps: DawCommand[] = [
+        { tool: 'project.set_tempo', arguments: { tempo: before.tempo } },
+        { tool: before.playing ? 'transport.play' : 'transport.stop', arguments: {} },
+        ...before.tracks.flatMap((track): DawCommand[] => [
+          { tool: 'track.set_volume', arguments: { trackId: track.id, volume: track.volume } },
+          { tool: 'track.set_mute', arguments: { trackId: track.id, mute: track.mute } },
+          { tool: 'track.set_solo', arguments: { trackId: track.id, solo: track.solo } },
+        ]),
+      ];
+      const call: Activity = {
+        id: randomUUID(),
+        sessionId: this.sessionId,
+        conversationId,
+        agent: 'user',
+        tool: 'run.undo',
+        arguments: { runId: id },
+        status: 'running',
+        timestamp: new Date(this.now()).toISOString(),
+        detail: 'Restoring the session to before the run.',
+        undoable: false,
+      };
+      await this.record(call);
+      try {
+        for (const step of steps)
+          if (
+            (await this.capabilities()).some(
+              (c) => c.id === step.tool && c.support !== 'unsupported',
+            )
+          )
+            await this.adapter.execute(step);
+      } catch (error) {
+        return this.record({ ...call, status: 'failed', detail: errorText(error) });
+      }
+      this.finishedRuns.set(id, { ...finished, run: { ...finished.run, undone: true } });
+      if (this.run?.id === id) this.run = { ...this.run, undone: true };
+      return this.record({
+        ...call,
+        status: 'succeeded',
+        detail: `Restored the session to before the run: ${before.tempo} BPM, ${before.tracks.length} track(s).`,
+      });
+    });
+  }
+  private lastWriteRevisionFor(runId: string): number | null {
+    let revision: number | null = null;
+    for (const call of this.calls.values())
+      if (call.runId === runId && call.afterRevision !== undefined) revision = call.afterRevision;
+    return revision;
   }
   decide(id: string, sessionId: string, approve: boolean) {
     return this.serial(async () => {

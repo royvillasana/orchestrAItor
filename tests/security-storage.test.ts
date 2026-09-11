@@ -45,7 +45,23 @@ describe('security boundaries', () => {
     expect((await assetResponse(root, 'orchestra://app/escape.txt')).status).toBe(403);
   });
   it('rejects bad IPC input and malformed outputs', () => {
-    expect(ipcInputs.setMode.safeParse({ mode: 'agent' }).success).toBe(false);
+    // Agent is a mode now; something that is not one still has to be refused.
+    expect(ipcInputs.setMode.safeParse({ mode: 'agent' }).success).toBe(true);
+    expect(ipcInputs.setMode.safeParse({ mode: 'autonomous' }).success).toBe(false);
+    expect(ipcInputs.setMode.safeParse({ mode: 'assist', extra: 'x' }).success).toBe(false);
+    // A run's budget is bounded at the boundary, not inside the orchestrator.
+    expect(ipcInputs.startRun.safeParse({ budget: { maxWrites: 0, maxSeconds: 60 } }).success).toBe(
+      false,
+    );
+    expect(
+      ipcInputs.startRun.safeParse({ budget: { maxWrites: 500, maxSeconds: 60 } }).success,
+    ).toBe(false);
+    expect(
+      ipcInputs.startRun.safeParse({ budget: { maxWrites: 5, maxSeconds: 99999 } }).success,
+    ).toBe(false);
+    expect(ipcInputs.startRun.safeParse({ budget: { maxWrites: 5, maxSeconds: 60 } }).success).toBe(
+      true,
+    );
     expect(
       ipcInputs.callTool.safeParse({ tool: 'exec', arguments: { cmd: 'id' }, conversationId: 'c' })
         .success,

@@ -360,6 +360,11 @@ async function invoke(method: IpcMethod, input: unknown): Promise<Snapshot> {
       await db.execute({ type: 'removeArtifact', ...ipcInputs.removeArtifact.parse(value) });
       artifacts = z.array(artifactSchema).parse(await db.execute({ type: 'artifacts' }));
     }
+    if (method === 'startRun')
+      await runtime!.control({ type: 'startRun', ...ipcInputs.startRun.parse(value) });
+    if (method === 'stopRun') await runtime!.control({ type: 'stopRun' });
+    if (method === 'undoRun')
+      await runtime!.control({ type: 'undoRun', ...ipcInputs.undoRun.parse(value) });
     if (method === 'setProvider')
       await runtime!.control({ type: 'provider', ...ipcInputs.setProvider.parse(value) });
     if (method === 'connect') {

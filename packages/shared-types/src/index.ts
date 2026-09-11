@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 export const idSchema = z.string().min(1).max(100);
-export const modeSchema = z.enum(['ask', 'assist']);
+export const modeSchema = z.enum(['ask', 'assist', 'agent']);
 export type Mode = z.infer<typeof modeSchema>;
 export const tempoSchema = z.number().finite().min(20).max(300);
 export const adapterIdSchema = z.enum(['mock', 'bridge']);
@@ -97,6 +97,40 @@ export const artifactSchema = z
   })
   .strict();
 export type MidiArtifact = z.infer<typeof artifactSchema>;
+/** What a run may do without asking, and how much of it. */
+export const runBudgetSchema = z
+  .object({
+    maxWrites: z.number().int().min(1).max(50),
+    maxSeconds: z.number().int().min(10).max(1800),
+  })
+  .strict();
+export type RunBudget = z.infer<typeof runBudgetSchema>;
+export const runSchema = z
+  .object({
+    id: idSchema,
+    budget: runBudgetSchema,
+    startedAt: z.string(),
+    writes: z.number().int().nonnegative(),
+    endedAt: z.string().nullable(),
+    endedBecause: z
+      .enum(['write-budget', 'time-budget', 'stopped', 'failed', 'disconnected', 'mode-changed'])
+      .nullable(),
+    undone: z.boolean(),
+  })
+  .strict();
+export type AgentRun = z.infer<typeof runSchema>;
+/**
+ * What Agent mode may do without asking. Deliberately a short list of
+ * reversible session changes; anything else still takes an approval.
+ */
+export const AGENT_MODE_TOOLS = [
+  'project.set_tempo',
+  'transport.play',
+  'transport.stop',
+  'track.set_volume',
+  'track.set_mute',
+  'track.set_solo',
+] as const;
 export const capabilitySchema = z
   .object({
     id: idSchema,
@@ -263,6 +297,8 @@ export const activitySchema = z
     result: resultSchema.optional(),
     afterRevision: z.number().optional(),
     undoOf: idSchema.optional(),
+    /** The autonomous run this write belonged to, if any. */
+    runId: idSchema.optional(),
   })
   .strict();
 export type Activity = z.infer<typeof activitySchema>;
@@ -312,6 +348,7 @@ export const runtimeStateSchema = z
     provider: providerIdSchema,
     providerLabel: z.string().max(120),
     providerLive: z.boolean(),
+    run: runSchema.nullable(),
   })
   .strict();
 export type RuntimeState = z.infer<typeof runtimeStateSchema>;
@@ -360,6 +397,9 @@ export const controlSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('provider'), provider: providerIdSchema }).strict(),
   z.object({ type: z.literal('disconnect') }).strict(),
   z.object({ type: z.literal('mode'), mode: modeSchema }).strict(),
+  z.object({ type: z.literal('startRun'), budget: runBudgetSchema }).strict(),
+  z.object({ type: z.literal('stopRun') }).strict(),
+  z.object({ type: z.literal('undoRun'), id: idSchema, conversationId: idSchema }).strict(),
   z.object({ type: z.literal('decision'), decision: decisionSchema }).strict(),
   z.object({ type: z.literal('undo'), id: idSchema, conversationId: idSchema }).strict(),
   z.object({ type: z.literal('chat'), message: sendSchema }).strict(),
@@ -460,6 +500,9 @@ export const ipcInputs = {
   disconnect: emptySchema,
   restart: emptySchema,
   setMode: z.object({ mode: modeSchema }).strict(),
+  startRun: z.object({ budget: runBudgetSchema }).strict(),
+  stopRun: emptySchema,
+  undoRun: z.object({ id: idSchema, conversationId: idSchema }).strict(),
   createConversation: emptySchema,
   sendMessage: sendSchema,
   callTool: callSchema,
@@ -485,11 +528,20 @@ export interface AgentCapabilities {
   streaming: boolean;
   local: boolean;
 }
+export interface AgentRunContext {
+  writesLeft: number;
+  secondsLeft: number;
+  withoutApproval: string[];
+}
 export interface AgentProvider {
   id: string;
   name: string;
   initialize(): Promise<void>;
-  sendMessage(conversation: Conversation, tools: ToolDefinition[]): Promise<AgentResponse>;
+  sendMessage(
+    conversation: Conversation,
+    tools: ToolDefinition[],
+    run?: AgentRunContext,
+  ): Promise<AgentResponse>;
   cancel(): Promise<void>;
   getCapabilities(): AgentCapabilities;
 }

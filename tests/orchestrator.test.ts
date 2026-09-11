@@ -155,6 +155,116 @@ describe('permission-controlled orchestration', () => {
     const tool = (await core.tools()).find((t) => t.id === 'midi.create_clip');
     expect(tool).toMatchObject({ risk: 'safe-write', requiresConfirmation: true });
   });
+  describe('agent mode', () => {
+    const budget = { maxWrites: 3, maxSeconds: 60 };
+    const start = async (fixtureArgs?: Parameters<typeof fixture>[0]) => {
+      const context = fixture(fixtureArgs);
+      await context.core.connect();
+      await context.core.setMode('agent');
+      await context.core.startRun(budget);
+      return context;
+    };
+    it('is never active until it is chosen', async () => {
+      const { core } = fixture();
+      await core.connect();
+      expect((await core.state()).mode).toBe('ask');
+      expect((await core.state()).run).toBe(null);
+      // A run needs the mode, and the mode alone is not a run.
+      await expect(core.startRun(budget)).rejects.toThrow(/Agent mode/);
+      await core.setMode('agent');
+      expect((await core.state()).run).toBe(null);
+    });
+    it('runs listed tools without approval and still asks for the rest', async () => {
+      const { core } = await start();
+      const write = await core.request('project.set_tempo', { tempo: 124 }, 'c');
+      expect(write.status).toBe('succeeded');
+      expect((await core.state()).project?.tempo).toBe(124);
+      expect((await core.state()).run?.writes).toBe(1);
+
+      // Clip generation is not on the standing list, so it still waits.
+      core.useArtifacts({ createClip: async () => 'made a clip' });
+      const unlisted = await core.request('midi.create_clip', { kind: 'chords' }, 'c');
+      expect(unlisted.status).toBe('awaiting-approval');
+    });
+    it('stops at the write budget and says so', async () => {
+      const { core } = await start();
+      for (const tempo of [121, 122, 123])
+        expect((await core.request('project.set_tempo', { tempo }, 'c')).status).toBe('succeeded');
+      const beyond = await core.request('project.set_tempo', { tempo: 124 }, 'c');
+      expect(beyond.status).toBe('denied');
+      expect(beyond.detail).toMatch(/write limit/);
+      // The session keeps the last permitted value, not the refused one.
+      expect((await core.state()).project?.tempo).toBe(123);
+      expect((await core.state()).run?.endedBecause).toBe('write-budget');
+    });
+    it('stops at the time budget before making another change', async () => {
+      const context = fixture();
+      await context.core.connect();
+      await context.core.setMode('agent');
+      await context.core.startRun({ maxWrites: 10, maxSeconds: 30 });
+      expect((await context.core.request('project.set_tempo', { tempo: 124 }, 'c')).status).toBe(
+        'succeeded',
+      );
+      context.advance();
+      const late = await context.core.request('project.set_tempo', { tempo: 130 }, 'c');
+      expect(late.status).toBe('denied');
+      expect(late.detail).toMatch(/time limit/);
+      expect((await context.core.state()).run?.endedBecause).toBe('time-budget');
+      expect((await context.core.state()).project?.tempo).toBe(124);
+    });
+    it('stops immediately when asked, before the next change', async () => {
+      const { core } = await start();
+      await core.request('project.set_tempo', { tempo: 124 }, 'c');
+      await core.stopRun();
+      const after = await core.request('project.set_tempo', { tempo: 130 }, 'c');
+      expect(after.status).toBe('denied');
+      expect((await core.state()).project?.tempo).toBe(124);
+      expect((await core.state()).run?.endedBecause).toBe('stopped');
+    });
+    it('ends the run when a write fails, rather than carrying on', async () => {
+      const { core } = await start();
+      // A track that does not exist: the adapter refuses it.
+      const failed = await core.request('track.set_mute', { trackId: 'nope', mute: true }, 'c');
+      expect(failed.status).toBe('failed');
+      expect((await core.state()).run?.endedBecause).toBe('failed');
+      expect((await core.request('project.set_tempo', { tempo: 124 }, 'c')).status).toBe('denied');
+    });
+    it('ends the run on disconnect and on a mode change', async () => {
+      const first = await start();
+      await first.core.disconnect();
+      expect((await first.core.state()).run?.endedBecause).toBe('disconnected');
+      const second = await start();
+      await second.core.setMode('assist');
+      expect((await second.core.state()).run?.endedBecause).toBe('mode-changed');
+    });
+    it('undoes a whole run, and refuses when the session moved on', async () => {
+      const { core } = await start();
+      const before = (await core.state()).project!;
+      await core.request('project.set_tempo', { tempo: 140 }, 'c');
+      await core.request('track.set_mute', { trackId: 'kick', mute: true }, 'c');
+      const runId = (await core.state()).run!.id;
+      await core.stopRun();
+
+      const undone = await core.undoRun(runId, 'c');
+      expect(undone.status).toBe('succeeded');
+      const restored = (await core.state()).project!;
+      expect(restored.tempo).toBe(before.tempo);
+      expect(restored.tracks.find((track) => track.id === 'kick')?.mute).toBe(false);
+      // Already undone, and the session has moved on since.
+      await expect(core.undoRun(runId, 'c')).rejects.toThrow(/already been undone/);
+    });
+    it('refuses a run undo when the session changed after the run', async () => {
+      const { core } = await start();
+      await core.request('project.set_tempo', { tempo: 140 }, 'c');
+      const runId = (await core.state()).run!.id;
+      await core.stopRun();
+      // Someone changes the session afterwards.
+      await core.setMode('assist');
+      const later = await core.request('project.set_tempo', { tempo: 150 }, 'c');
+      await core.decide(later.id, later.sessionId, true);
+      await expect(core.undoRun(runId, 'c')).rejects.toThrow(/conflict/i);
+    });
+  });
   it('rechecks adapter capability after approval', async () => {
     const { core, adapter } = fixture();
     await core.connect();
