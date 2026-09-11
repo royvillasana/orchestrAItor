@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { BorderBeam } from 'border-beam';
+import PixelArc from './originkit/ui/pixel-arc';
 import { RichText } from './rich-text';
 import { ThinkingBubble, StreamingMessage, ToolChip, TurnError } from './chat-states';
 import type {
@@ -344,8 +345,35 @@ export function Studio({ setup = false }: { setup?: boolean }) {
   );
   if (setup)
     return (
-      <main className="flex h-screen flex-col overflow-hidden bg-ink">
-        <header className="flex h-16 shrink-0 items-center justify-between border-b border-line px-6 tall:h-20 tall:px-10">
+      <main className="relative flex h-screen flex-col overflow-hidden bg-ink">
+        {/* The shader sits behind everything and takes no input: the connection
+            screen's buttons matter more than its pointer response. It animates,
+            so it follows the same rules as the composer beam — off when the
+            window is not on screen, and never for reduced motion. */}
+        <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
+          {beamActive && (
+            <PixelArc
+              background="#101214"
+              baseColor="#2f4a2a"
+              accentColor="#c8ed9c"
+              highlight="#edf0ed"
+              density={140}
+              dotSize={82}
+              speed={34}
+              pointerStrength={0}
+              // A horizon along the bottom. The screen is dense, so the arc
+              // reads as a deliberate glow under the content rather than a
+              // texture showing through the gaps between cards.
+              arc={{ center: 86, drop: 34, thickness: 26, falloff: 300 }}
+              // The component asks for 1200x800 minimum, which would push the
+              // window into overflow at the smallest size it supports.
+              style={{ minWidth: 0, minHeight: 0, width: '100%', height: '100%' }}
+            />
+          )}
+          {/* Keeps the type readable over whatever the shader is doing. */}
+          <div className="absolute inset-0 bg-gradient-to-b from-ink via-ink/85 to-ink/35" />
+        </div>
+        <header className="relative flex h-16 shrink-0 items-center justify-between border-b border-line px-6 tall:h-20 tall:px-10">
           {brand}
           <div className="flex items-center gap-4">
             <span className="hidden text-xs text-muted lg:inline">YOUR STUDIO. CONNECTED.</span>
@@ -353,7 +381,7 @@ export function Studio({ setup = false }: { setup?: boolean }) {
           </div>
         </header>
         {errorBanner}
-        <div className="mx-auto flex min-h-0 w-full max-w-5xl flex-1 xl:max-w-6xl flex-col justify-center gap-3 px-6 py-4 tall:gap-5 tall:px-10 tall:py-8">
+        <div className="relative mx-auto flex min-h-0 w-full max-w-5xl flex-1 xl:max-w-6xl flex-col justify-center gap-3 px-6 py-4 tall:gap-5 tall:px-10 tall:py-8">
           <div className="flex shrink-0 items-end justify-between gap-6">
             <div className="min-w-0">
               <p className="mb-2 font-mono text-xs tracking-[0.2em] text-accent tall:mb-4">
@@ -535,7 +563,7 @@ export function Studio({ setup = false }: { setup?: boolean }) {
               )}
             </section>
           </div>
-          <div className="shrink-0 rounded-xl border border-dashed border-line px-5 py-4 tall:px-6 tall:py-5">
+          <div className="shrink-0 rounded-xl border border-dashed border-line bg-panel/60 px-5 py-4 backdrop-blur-md tall:px-6 tall:py-5">
             <div className="flex items-center gap-4">
               <Icon kind="folder" className="shrink-0 text-muted" />
               <div className="min-w-0">
