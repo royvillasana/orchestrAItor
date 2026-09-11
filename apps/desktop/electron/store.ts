@@ -34,6 +34,8 @@ export function redact(text: string): string {
     .replace(/((?:api[_-]?key|token|password|secret)\s*[=:]\s*)[^\s,;]+/gi, '$1[REDACTED]');
 }
 /** Must match the indexer's derivation so removals and updates address the same row. */
+/** Below this an estimate is a guess, and a guess should not answer a question. */
+export const MIN_MATCH_CONFIDENCE = 0.35;
 export const sampleId = (file: string) =>
   createHash('sha1').update(file).digest('hex').slice(0, 24);
 export const migration = `
@@ -168,16 +170,24 @@ export class LocalStore {
       this.db.exec('SELECT json FROM sample_roots ORDER BY rowid')[0]?.values ?? []
     ).map((row) => sampleRootSchema.parse(JSON.parse(String(row[0]))));
     const total = Number(this.db.exec('SELECT COUNT(*) FROM samples')[0]?.values[0]?.[0] ?? 0);
-    return sampleLibrarySchema.parse({ roots, total });
+    const analysed = (this.db.exec('SELECT json FROM samples')[0]?.values ?? []).filter((row) =>
+      String(row[0]).includes('"analysedAt":"'),
+    ).length;
+    return sampleLibrarySchema.parse({ roots, total, analysed });
   }
   /**
    * Ranked by where the query matches: an exact name beats a name prefix, which
    * beats a tag, which beats anything else in the path. Shorter names win ties,
    * because "kick.wav" is a better answer than "kick_layer_processed_v3.wav".
    */
-  searchSamples(query: string, limit: number): IndexedSample[] {
+  searchSamples(
+    query: string,
+    limit: number,
+    filters: { key?: string; scale?: 'major' | 'minor'; tempoMin?: number; tempoMax?: number } = {},
+  ): IndexedSample[] {
     const needle = query.trim().toLowerCase();
-    if (!needle) return [];
+    const musical = !!(filters.key || filters.tempoMin || filters.tempoMax);
+    if (!needle && !musical) return [];
     const terms = needle.split(/\s+/).filter(Boolean);
     const scored: { sample: IndexedSample; score: number }[] = [];
     for (const row of this.db.exec('SELECT json FROM samples')[0]?.values ?? []) {
@@ -185,7 +195,24 @@ export class LocalStore {
       const name = sample.name.toLowerCase();
       const haystack = `${sample.path.toLowerCase()} ${sample.tags.join(' ')}`;
       if (!terms.every((term) => haystack.includes(term))) continue;
+      // Musical filters exclude rather than rank: a producer asking for A minor
+      // does not want D major ranked lower, they want it gone. An estimate
+      // below the confidence floor is not evidence of a key, so it does not
+      // match one — otherwise every weak guess answers every musical question.
+      if (filters.key && (sample.keyConfidence ?? 0) < MIN_MATCH_CONFIDENCE) continue;
+      if (filters.key && sample.estimatedKey !== filters.key) continue;
+      if (filters.scale && sample.estimatedScale !== filters.scale) continue;
+      if (
+        (filters.tempoMin || filters.tempoMax) &&
+        (sample.tempoConfidence ?? 0) < MIN_MATCH_CONFIDENCE
+      )
+        continue;
+      if (filters.tempoMin && (sample.estimatedTempo ?? 0) < filters.tempoMin) continue;
+      if (filters.tempoMax && (sample.estimatedTempo ?? Infinity) > filters.tempoMax) continue;
       let score = 0;
+      // A confident estimate outranks a guess when the filter is musical.
+      if (musical)
+        score += Math.round(((sample.keyConfidence ?? 0) + (sample.tempoConfidence ?? 0)) * 30);
       if (name === needle || name.replace(/\.[^.]+$/, '') === needle) score += 100;
       if (name.startsWith(needle)) score += 40;
       if (name.includes(needle)) score += 20;
@@ -198,6 +225,10 @@ export class LocalStore {
       .slice(0, limit)
       .map((entry) => entry.sample);
   }
+  sampleById(id: string): IndexedSample | null {
+    const row = this.db.exec('SELECT json FROM samples WHERE id=?', [id])[0]?.values[0]?.[0];
+    return row ? indexedSampleSchema.parse(JSON.parse(String(row))) : null;
+  }
   sampleByPath(file: string): IndexedSample | null {
     for (const row of this.db.exec('SELECT json FROM samples')[0]?.values ?? []) {
       const sample = indexedSampleSchema.parse(JSON.parse(String(row[0])));
@@ -209,7 +240,18 @@ export class LocalStore {
     const command = storeCommandSchema.parse(raw);
     if (command.type === 'history') return this.history();
     if (command.type === 'library') return this.library();
-    if (command.type === 'searchSamples') return this.searchSamples(command.query, command.limit);
+    if (command.type === 'searchSamples')
+      return this.searchSamples(command.query, command.limit, {
+        key: command.key,
+        scale: command.scale,
+        tempoMin: command.tempoMin,
+        tempoMax: command.tempoMax,
+      });
+    if (command.type === 'unanalysed')
+      return (this.db.exec('SELECT json FROM samples')[0]?.values ?? [])
+        .map((row) => indexedSampleSchema.parse(JSON.parse(String(row[0]))))
+        .filter((sample) => !sample.analysedAt && ['wav', 'aif', 'aiff'].includes(sample.extension))
+        .slice(0, command.limit);
     if (command.type === 'sampleByPath') return this.sampleByPath(command.path);
     if (command.type === 'artifacts') return this.artifacts();
     if (command.type === 'samplesForRoot')
@@ -253,6 +295,26 @@ export class LocalStore {
           rmSync(existing.path, { force: true });
           this.db.run('DELETE FROM artifacts WHERE id=?', [command.id]);
         }
+      }
+      if (command.type === 'analysed') {
+        const existing = this.sampleById(command.id);
+        // Estimates attach to the sample; a re-index that changed the file
+        // rewrites the row without them, so they are recomputed.
+        // samples carries its own root column, so the generic two-column put
+        // would fail its NOT NULL constraint and roll the write back.
+        if (existing)
+          this.db.run('UPDATE samples SET json=? WHERE id=?', [
+            JSON.stringify({
+              ...existing,
+              estimatedKey: command.estimatedKey,
+              estimatedScale: command.estimatedScale,
+              keyConfidence: command.keyConfidence,
+              estimatedTempo: command.estimatedTempo,
+              tempoConfidence: command.tempoConfidence,
+              analysedAt: command.analysedAt,
+            }),
+            existing.id,
+          ]);
       }
       if (command.type === 'addRoot')
         this.db.run(

@@ -124,6 +124,75 @@ describe('SQLite persistence', () => {
     expect(store.history().activities[0].status).toBe('unknown-outcome');
     store.close();
   });
+  it('filters a musical search on estimates, and only confident ones', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'orchestrai-musical-'));
+    const store = await LocalStore.open(path.join(directory, 'orchestrai.sqlite'), wasm);
+    const base = {
+      root: '/library',
+      extension: 'wav',
+      size: 1000,
+      modifiedMs: 1,
+      tags: ['loop'],
+      sampleRate: 44100,
+      channels: 2,
+      bitDepth: 16,
+      durationMs: 4000,
+    };
+    store.execute({
+      type: 'indexed',
+      report: {
+        root: '/library',
+        samples: [
+          { ...base, id: 'a', path: '/library/pad.wav', name: 'pad.wav' },
+          { ...base, id: 'b', path: '/library/guess.wav', name: 'guess.wav' },
+          { ...base, id: 'c', path: '/library/other.wav', name: 'other.wav' },
+        ],
+        added: 3,
+        updated: 0,
+        removed: [],
+        skipped: 0,
+        truncated: false,
+        errors: [],
+        indexedAt: new Date().toISOString(),
+      },
+    });
+    const analyse = (
+      id: string,
+      key: string | null,
+      keyConfidence: number | null,
+      tempo: number | null,
+      tempoConfidence: number | null,
+    ) =>
+      store.execute({
+        type: 'analysed',
+        id,
+        estimatedKey: key,
+        estimatedScale: key ? 'minor' : null,
+        keyConfidence,
+        estimatedTempo: tempo,
+        tempoConfidence,
+        analysedAt: new Date().toISOString(),
+      });
+    analyse('a', 'A', 0.88, 124, 0.7);
+    // The same key, but the estimate is barely better than chance.
+    analyse('b', 'A', 0.12, 124, 0.1);
+    analyse('c', 'D', 0.9, 90, 0.8);
+
+    const byKey = store.searchSamples('', 10, { key: 'A' });
+    expect(byKey.map((sample) => sample.name)).toEqual(['pad.wav']);
+    const byTempo = store.searchSamples('', 10, { tempoMin: 120, tempoMax: 130 });
+    expect(byTempo.map((sample) => sample.name)).toEqual(['pad.wav']);
+    // Estimates survive as data on the sample, and the library counts them.
+    expect(byKey[0]).toMatchObject({
+      estimatedKey: 'A',
+      estimatedScale: 'minor',
+      keyConfidence: 0.88,
+    });
+    expect(store.library().analysed).toBe(3);
+    // Text search still works on everything, analysed or not.
+    expect(store.searchSamples('guess', 10).map((sample) => sample.name)).toEqual(['guess.wav']);
+    await store.close();
+  });
   it('preserves corrupt files instead of resetting user data', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'orchestrai-corrupt-'));
     const file = path.join(dir, 'studio.sqlite');

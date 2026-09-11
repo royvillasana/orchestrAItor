@@ -19,8 +19,16 @@ import {
   type ToolName,
 } from '@orchestrai/shared-types';
 
+export interface SampleQuery {
+  query?: string;
+  key?: string;
+  scale?: 'major' | 'minor';
+  tempoMin?: number;
+  tempoMax?: number;
+  limit?: number;
+}
 export interface SampleTools {
-  search(query: string, limit: number): Promise<string>;
+  search(query: SampleQuery): Promise<string>;
   stats(): Promise<string>;
 }
 export interface ArtifactTools {
@@ -240,10 +248,7 @@ export class Orchestrator {
       const detail =
         call.tool === 'samples.stats'
           ? await this.samples.stats()
-          : await this.samples.search(
-              toolSchemas['samples.search'].parse(call.arguments).query,
-              toolSchemas['samples.search'].parse(call.arguments).limit ?? 10,
-            );
+          : await this.samples.search(toolSchemas['samples.search'].parse(call.arguments));
       return this.record({ ...call, status: 'succeeded', undoable: false, detail });
     } catch (error) {
       return this.record({ ...call, status: 'failed', detail: errorText(error) });

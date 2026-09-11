@@ -178,6 +178,17 @@ pnpm test:smoke-samples <folder>   # index, search, and preview a real folder
 
 Preview plays through `orchestra-sample://`, a second protocol confined to the index: the resolved path of any request must be an indexed file, so a symlink cannot borrow an indexed name to reach something else, and a file the producer never indexed is refused whether or not it exists. The scheme supports media only — no fetch — and CSP admits it under `media-src` alone.
 
+### Estimated key and tempo
+
+`Analyse key & tempo` estimates each WAV or AIFF sample's key and tempo from the audio itself, so search can answer a musical question rather than a filename one. Type a key like `Am` into the sample search box, or ask a live agent for "a kick in A minor near 124".
+
+**These are estimates and are labelled as such**, with a confidence beside them. A key stated with false certainty sends a producer to the wrong sound, which costs more than no key at all. Below 35% confidence an estimate does not answer a musical search — a weak guess is not evidence — though the sample is still findable by name.
+
+- **Key** comes from chroma correlation against major and minor profiles. It confuses relative majors and minors on ambiguous material; the confidence is the margin over the alternatives.
+- **Tempo** comes from onset autocorrelation with a prior over musical tempos. Half and double time are inherent to the method; material with no attacks — a pad, noise, a one-shot — reports no tempo rather than a number pulled out of its own noise floor.
+- **Compressed formats are not analysed.** Doing it honestly needs a real codec, and estimating from a partial decode produces errors nobody can account for. Those samples stay searchable by name and header facts.
+- **Analysis is separate from indexing**, because it decodes audio and indexing does not. It runs in the background, is stoppable, skips what it has already done, and persists across restarts. Measured here: 10 samples in about 12 seconds. A large library will take real time on a machine that may also be running a DAW.
+
 **What leaves the machine**: audio never does. When a live partner is connected, search results it asks for — file names, folder names, and header facts — are sent to that model provider along with the rest of the conversation, which is what the connection screen already discloses.
 
 ## Generated clips (MIDI artifacts)
@@ -232,4 +243,4 @@ For development-mode smoke verification, start `pnpm --filter @orchestrai/deskto
 
 ## Next milestones
 
-Audio analysis remains the next milestone. API credential storage, plugin operations, autonomous Agent mode, and token-level streaming into the transcript remain separate integrations. The active implementation checklist is `openspec/changes/add-cubase-midi-bridge/tasks.md`; Milestone 1 is archived under `openspec/changes/archive/`.
+API credential storage, plugin operations, autonomous Agent mode, and token-level streaming into the transcript remain separate integrations. The active implementation checklist is `openspec/changes/add-cubase-midi-bridge/tasks.md`; Milestone 1 is archived under `openspec/changes/archive/`.

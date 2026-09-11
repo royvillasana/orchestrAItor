@@ -513,21 +513,37 @@ export function Studio({ setup = false }: { setup?: boolean }) {
               <div className="min-w-0">
                 <h2 className="text-sm">Your sample libraries</h2>
                 <p className="mt-1 truncate text-xs text-muted">
-                  {data?.indexing ??
+                  {data?.analysing ??
+                    data?.indexing ??
                     (library.roots.length === 0
                       ? 'Add a folder to search your own sounds. Nothing is copied or uploaded.'
-                      : `${library.total} samples indexed from ${library.roots.length} folder${library.roots.length === 1 ? '' : 's'}.`)}
+                      : `${library.total} samples indexed from ${library.roots.length} folder${
+                          library.roots.length === 1 ? '' : 's'
+                        }${library.analysed ? `, ${library.analysed} analysed` : ''}.`)}
                 </p>
               </div>
               <div className="ml-auto flex shrink-0 items-center gap-2">
                 {library.roots.length > 0 && (
-                  <button
-                    onClick={() => void run((api) => api.reindexSamples({}))}
-                    disabled={busy || !desktop || !!data?.indexing}
-                    className={smallButton}
-                  >
-                    Re-index
-                  </button>
+                  <>
+                    <button
+                      onClick={() => void run((api) => api.reindexSamples({}))}
+                      disabled={busy || !desktop || !!data?.indexing || !!data?.analysing}
+                      className={smallButton}
+                    >
+                      Re-index
+                    </button>
+                    <button
+                      onClick={() =>
+                        void run((api) =>
+                          data?.analysing ? api.stopAnalysis({}) : api.analyseSamples({}),
+                        )
+                      }
+                      disabled={busy || !desktop || !!data?.indexing}
+                      className={smallButton}
+                    >
+                      {data?.analysing ? 'Stop analysis' : 'Analyse key & tempo'}
+                    </button>
+                  </>
                 )}
                 <button
                   onClick={() => void run((api) => api.addSampleFolder({}))}
@@ -813,7 +829,17 @@ export function Studio({ setup = false }: { setup?: boolean }) {
                   className="mt-3"
                   onSubmit={(event) => {
                     event.preventDefault();
-                    void run((api) => api.searchSamples({ query: sampleQuery }));
+                    // "Am" or "F#" is a key, not a filename: search musically.
+                    const musical = /^([A-Ga-g][#b]?)(m|maj|min|minor|major)?$/.exec(
+                      sampleQuery.trim(),
+                    );
+                    void run((api) =>
+                      api.searchSamples(
+                        musical
+                          ? { query: '', key: musical[1].toUpperCase() }
+                          : { query: sampleQuery },
+                      ),
+                    );
                   }}
                 >
                   <label htmlFor="sample-search" className="sr-only">
@@ -823,7 +849,7 @@ export function Studio({ setup = false }: { setup?: boolean }) {
                     id="sample-search"
                     value={sampleQuery}
                     onChange={(event) => setSampleQuery(event.target.value)}
-                    placeholder="Search samples"
+                    placeholder="Search samples, or a key like Am"
                     maxLength={120}
                     className="w-full rounded-lg border border-line bg-panel px-2.5 py-1.5 text-[11px] placeholder:text-muted/60"
                   />
@@ -838,12 +864,17 @@ export function Studio({ setup = false }: { setup?: boolean }) {
                           preview === sample.path ? 'text-accent' : 'text-muted'
                         }`}
                       >
-                        {sample.name}
-                        {sample.durationMs !== null && (
-                          <span className="ml-1 text-muted/60">
-                            {(sample.durationMs / 1000).toFixed(1)}s
-                          </span>
-                        )}
+                        <span className="block truncate">{sample.name}</span>
+                        <span className="block truncate text-[10px] text-muted/60">
+                          {sample.durationMs !== null &&
+                            `${(sample.durationMs / 1000).toFixed(1)}s`}
+                          {/* Estimated, and said so: a key read as fact would
+                              send a producer to the wrong sound. */}
+                          {sample.estimatedKey &&
+                            ` · ~${sample.estimatedKey}${sample.estimatedScale === 'minor' ? 'm' : ''} ${Math.round((sample.keyConfidence ?? 0) * 100)}%`}
+                          {sample.estimatedTempo &&
+                            ` · ~${Math.round(sample.estimatedTempo)} BPM ${Math.round((sample.tempoConfidence ?? 0) * 100)}%`}
+                        </span>
                       </button>
                     </li>
                   ))}

@@ -3,17 +3,15 @@
 ## Purpose
 
 TBD - created by archiving change setup-orchestrai-desktop. Update Purpose after archive.
-
 ## Requirements
-
 ### Requirement: Capability-filtered validated music tools
 
-The tool registry SHALL expose tools filtered by the current mode and by the capabilities reported by the connected adapter, and SHALL additionally expose local read-only sample tools that do not depend on a DAW connection. Capability SHALL be revalidated immediately before execution, after any approval.
+The tool registry SHALL expose tools filtered by mode and by the connected adapter's reported capabilities, and SHALL additionally expose local read-only sample tools that do not require a DAW connection. Sample search SHALL accept musical filters — key and tempo range — alongside text, validated like every other tool input. Capability SHALL be revalidated immediately before execution, after any approval.
 
-#### Scenario: Sample search without a DAW session
+#### Scenario: Musical filters are validated
 
-- **WHEN** no DAW adapter is connected
-- **THEN** sample search remains available and DAW tools do not
+- **WHEN** a search is requested with a key that is not a note name
+- **THEN** it is refused before searching
 
 #### Scenario: Capability lost between approval and execution
 
@@ -70,3 +68,4 @@ Every invocation SHALL be recorded with its terminal outcome. Writes that mutate
 
 - **WHEN** an approved tempo change completes
 - **THEN** it remains undoable through the existing revision check
+

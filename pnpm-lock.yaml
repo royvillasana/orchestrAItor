@@ -65,6 +65,9 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: 1.30.0
         version: 1.30.0(zod@3.25.76)
+      '@orchestrai/audio-analysis':
+        specifier: workspace:*
+        version: link:../../packages/audio-analysis
       '@orchestrai/cli':
         specifier: workspace:*
         version: link:../../packages/agents/cli

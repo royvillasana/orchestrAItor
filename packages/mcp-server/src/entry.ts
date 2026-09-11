@@ -60,15 +60,30 @@ const orchestration = new Orchestrator(new MockCubaseAdapter(), async (activity)
  * channel; the runtime keeps no library of its own.
  */
 orchestration.useSamples({
-  search: async (query, limit) => {
+  search: async (input) => {
     const library = sampleLibrarySchema.parse(await store({ type: 'library' }));
     if (library.roots.length === 0)
       throw new Error('No sample folder has been added yet. Add one in the connection screen.');
-    const results = z
-      .array(indexedSampleSchema)
-      .parse(await store({ type: 'searchSamples', query, limit }));
-    if (results.length === 0)
-      return `No sample matched "${query}" in ${library.total} indexed samples.`;
+    const results = z.array(indexedSampleSchema).parse(
+      await store({
+        type: 'searchSamples',
+        query: input.query ?? '',
+        limit: input.limit ?? 10,
+        ...(input.key ? { key: input.key } : {}),
+        ...(input.scale ? { scale: input.scale } : {}),
+        ...(input.tempoMin ? { tempoMin: input.tempoMin } : {}),
+        ...(input.tempoMax ? { tempoMax: input.tempoMax } : {}),
+      }),
+    );
+    const musical = input.key || input.tempoMin || input.tempoMax;
+    if (results.length === 0) {
+      const analysed = library.analysed ?? 0;
+      // A musical search over an unanalysed library found nothing because
+      // nothing has been analysed, which is a different answer from no match.
+      if (musical && analysed === 0)
+        return `No sample has been analysed yet, so key and tempo are unknown. Run analysis from the connection screen. ${library.total} samples are indexed by name.`;
+      return `No sample matched in ${library.total} indexed samples.`;
+    }
     return results
       .map((sample) => {
         const facts = [
@@ -76,7 +91,19 @@ orchestration.useSamples({
           sample.sampleRate !== null ? `${sample.sampleRate} Hz` : null,
           sample.channels === 1 ? 'mono' : sample.channels === 2 ? 'stereo' : null,
         ].filter(Boolean);
-        return `${sample.name}${facts.length ? ` (${facts.join(', ')})` : ''} — ${sample.path}`;
+        // Estimates are labelled, and carry their confidence, so neither a
+        // producer nor an agent reads them as facts from a header.
+        const estimates = [
+          sample.estimatedKey
+            ? `key ~${sample.estimatedKey} ${sample.estimatedScale ?? ''} (est. ${Math.round((sample.keyConfidence ?? 0) * 100)}%)`
+            : null,
+          sample.estimatedTempo
+            ? `tempo ~${sample.estimatedTempo} BPM (est. ${Math.round((sample.tempoConfidence ?? 0) * 100)}%)`
+            : null,
+        ].filter(Boolean);
+        return `${sample.name}${facts.length ? ` (${facts.join(', ')})` : ''}${
+          estimates.length ? ` [${estimates.join(', ')}]` : ''
+        } — ${sample.path}`;
       })
       .join('\n');
   },
@@ -84,7 +111,7 @@ orchestration.useSamples({
     const library = sampleLibrarySchema.parse(await store({ type: 'library' }));
     if (library.roots.length === 0) return 'No sample folder has been added yet.';
     return [
-      `${library.total} samples indexed across ${library.roots.length} folder(s).`,
+      `${library.total} samples indexed across ${library.roots.length} folder(s); ${library.analysed ?? 0} analysed for key and tempo.`,
       ...library.roots.map(
         (root) =>
           `${root.path}: ${root.count} samples${root.truncated ? ' (truncated at the index cap)' : ''}${root.indexedAt ? `, indexed ${root.indexedAt}` : ', not indexed yet'}`,
@@ -104,12 +131,14 @@ orchestration.useArtifacts({
     const seed = input.seed ?? Math.floor(Math.random() * 1000000);
     const key = input.key ?? keyOf(project?.key) ?? 'C';
     const scale = input.scale ?? scaleOf(project?.key) ?? 'minor';
+    const bars = input.bars ?? 4;
+    const tempo = input.tempo ?? project?.tempo ?? 120;
     const clip = generateClip({
       kind: input.kind,
       key,
       scale,
-      bars: input.bars ?? 4,
-      tempo: input.tempo ?? project?.tempo ?? 120,
+      bars,
+      tempo,
       progression: input.progression ?? 'pop',
       seed,
     });
@@ -119,11 +148,11 @@ orchestration.useArtifacts({
         type: 'artifact',
         artifact: {
           id,
-          name: `${input.kind}-${key}-${input.bars ?? 4}bar`,
+          name: `${input.kind}-${key}-${bars}bar`,
           kind: input.kind,
           summary: clip.summary,
-          bars: input.bars ?? 4,
-          tempo: input.tempo ?? project?.tempo ?? 120,
+          bars,
+          tempo,
           key,
           scale,
           progression: input.progression ?? 'pop',

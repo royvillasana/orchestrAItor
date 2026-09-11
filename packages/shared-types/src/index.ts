@@ -34,6 +34,14 @@ export const indexedSampleSchema = z
     channels: z.number().int().positive().nullable(),
     bitDepth: z.number().int().positive().nullable(),
     durationMs: z.number().int().nonnegative().nullable(),
+    // Estimated from the audio, never read from a header. Kept separate from
+    // the header facts above so the two can never be confused for each other.
+    estimatedKey: z.string().max(3).nullable().optional(),
+    estimatedScale: z.enum(['major', 'minor']).nullable().optional(),
+    keyConfidence: z.number().min(0).max(1).nullable().optional(),
+    estimatedTempo: z.number().min(20).max(300).nullable().optional(),
+    tempoConfidence: z.number().min(0).max(1).nullable().optional(),
+    analysedAt: z.string().nullable().optional(),
   })
   .strict();
 export type IndexedSample = z.infer<typeof indexedSampleSchema>;
@@ -62,7 +70,12 @@ export const sampleRootSchema = z
   .strict();
 export type SampleRoot = z.infer<typeof sampleRootSchema>;
 export const sampleLibrarySchema = z
-  .object({ roots: z.array(sampleRootSchema), total: z.number().int().nonnegative() })
+  .object({
+    roots: z.array(sampleRootSchema),
+    total: z.number().int().nonnegative(),
+    /** How many of those carry key and tempo estimates. */
+    analysed: z.number().int().nonnegative().optional(),
+  })
   .strict();
 export type SampleLibrary = z.infer<typeof sampleLibrarySchema>;
 export const clipKindSchema = z.enum(['chords', 'bass', 'drums']);
@@ -164,10 +177,22 @@ export const toolSchemas = {
   'track.set_solo': z.object({ trackId: idSchema, solo: z.boolean() }).strict(),
   'samples.search': z
     .object({
-      query: z.string().trim().min(1).max(120),
+      query: z.string().trim().max(120).optional(),
+      // Musical filters: what a producer would actually ask for.
+      key: z
+        .string()
+        .regex(/^[A-Ga-g][#b]?$/, 'Key must be a note name such as A, F#, or Bb.')
+        .optional(),
+      scale: z.enum(['major', 'minor']).optional(),
+      tempoMin: tempoSchema.optional(),
+      tempoMax: tempoSchema.optional(),
       limit: z.number().int().min(1).max(50).optional(),
     })
-    .strict(),
+    .strict()
+    .refine(
+      (value) => value.query || value.key || value.tempoMin || value.tempoMax,
+      'Give something to search for: text, a key, or a tempo range.',
+    ),
   'samples.stats': emptySchema,
   'midi.create_clip': z
     .object({
@@ -300,6 +325,7 @@ export const snapshotSchema = z
     midi: midiStatusSchema.nullable(),
     library: sampleLibrarySchema,
     indexing: z.string().max(300).nullable(),
+    analysing: z.string().max(300).nullable(),
     streaming: streamSchema.nullable(),
     samples: z.array(indexedSampleSchema).max(50),
     artifacts: z.array(artifactSchema).max(200),
@@ -357,8 +383,25 @@ export const storeCommandSchema = z.discriminatedUnion('type', [
       type: z.literal('searchSamples'),
       query: z.string().max(120),
       limit: z.number().int().min(1).max(50),
+      key: z.string().max(3).optional(),
+      scale: z.enum(['major', 'minor']).optional(),
+      tempoMin: z.number().optional(),
+      tempoMax: z.number().optional(),
     })
     .strict(),
+  z
+    .object({
+      type: z.literal('analysed'),
+      id: idSchema,
+      estimatedKey: z.string().max(3).nullable(),
+      estimatedScale: z.enum(['major', 'minor']).nullable(),
+      keyConfidence: z.number().min(0).max(1).nullable(),
+      estimatedTempo: z.number().min(20).max(300).nullable(),
+      tempoConfidence: z.number().min(0).max(1).nullable(),
+      analysedAt: z.string(),
+    })
+    .strict(),
+  z.object({ type: z.literal('unanalysed'), limit: z.number().int().min(1).max(5000) }).strict(),
   z.object({ type: z.literal('sampleByPath'), path: z.string().max(1000) }).strict(),
   z.object({ type: z.literal('samplesForRoot'), root: z.string().max(1000) }).strict(),
   z.object({ type: z.literal('artifacts') }).strict(),
@@ -400,11 +443,19 @@ export const ipcInputs = {
   addSampleFolder: emptySchema,
   removeSampleFolder: z.object({ path: z.string().min(1).max(1000) }).strict(),
   reindexSamples: emptySchema,
+  analyseSamples: emptySchema,
+  stopAnalysis: emptySchema,
   revealArtifact: z.object({ id: idSchema }).strict(),
   removeArtifact: z.object({ id: idSchema }).strict(),
   dragArtifact: z.object({ id: idSchema }).strict(),
   searchSamples: z
-    .object({ query: z.string().max(120), limit: z.number().int().min(1).max(50).optional() })
+    .object({
+      query: z.string().max(120),
+      key: z.string().max(3).optional(),
+      tempoMin: z.number().optional(),
+      tempoMax: z.number().optional(),
+      limit: z.number().int().min(1).max(50).optional(),
+    })
     .strict(),
   disconnect: emptySchema,
   restart: emptySchema,

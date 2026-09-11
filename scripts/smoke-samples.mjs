@@ -7,7 +7,7 @@
  * rather than widening the IPC surface with a caller-supplied path.
  */
 import { _electron as electron } from 'playwright';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
@@ -39,7 +39,13 @@ try {
   );
   console.log(`indexed ${library.total} samples from ${library.roots.length} folder(s)`);
   assert.equal(library.roots.length, 1);
-  assert.equal(library.total, 7, 'Only audio files are indexed.');
+  // Counted from the folder rather than hardcoded: the fixture grows.
+  const audioFiles = (
+    await readdir(libraryFolder, { recursive: true, withFileTypes: true })
+  ).filter(
+    (entry) => entry.isFile() && /\.(wav|aif|aiff|mp3|flac|ogg|m4a)$/i.test(entry.name),
+  ).length;
+  assert.equal(library.total, audioFiles, 'Only audio files are indexed.');
   assert.equal(library.roots[0].truncated, false);
   assert.equal(library.roots[0].error, null);
 
@@ -53,7 +59,7 @@ try {
   );
   assert.equal(
     (await page.evaluate(async () => (await window.orchestra.snapshot({})).library)).total,
-    7,
+    audioFiles,
     'Re-index must not duplicate samples.',
   );
 

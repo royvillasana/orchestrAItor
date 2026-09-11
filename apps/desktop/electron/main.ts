@@ -10,10 +10,11 @@ import {
 } from 'electron';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
-import { realpath } from 'node:fs/promises';
+import { readFile, realpath } from 'node:fs/promises';
 import { z } from 'zod';
 import { discoverAgents } from '@orchestrai/cli';
 import { indexRoot } from '@orchestrai/sample-indexer';
+import { analyse } from '@orchestrai/audio-analysis';
 import {
   historySchema,
   snapshotSchema,
@@ -68,6 +69,8 @@ let runtime: RuntimeService | null = null;
 let state: RuntimeState | null = null;
 let midi: MidiStatus | null = null;
 let indexing: string | null = null;
+let analysing: string | null = null;
+let analysisStopped = false;
 let streaming: StreamChunk | null = null;
 let samples: Snapshot['samples'] = [];
 let library: Snapshot['library'] = { roots: [], total: 0 };
@@ -151,6 +154,7 @@ async function snapshot(): Promise<Snapshot> {
     midi,
     library,
     indexing,
+    analysing,
     streaming,
     artifacts,
     samples,
@@ -219,6 +223,56 @@ function startArtifactDrag(sender: Electron.WebContents, input: unknown) {
     log('artifact.drag_failed', errorText(error));
   }
 }
+/**
+ * Analysis decodes audio, which indexing does not, so it runs after indexing
+ * rather than inside it: otherwise adding a folder would appear to hang. It is
+ * bounded per file, stoppable, and skips anything already analysed.
+ */
+async function analyseSamples() {
+  if (analysing) return;
+  analysisStopped = false;
+  try {
+    for (;;) {
+      if (analysisStopped) break;
+      const batch = z
+        .array(indexedSampleSchema)
+        .parse(await db.execute({ type: 'unanalysed', limit: 25 }));
+      if (batch.length === 0) break;
+      for (const sample of batch) {
+        if (analysisStopped) break;
+        analysing = `Analysing ${path.basename(sample.path)}…`;
+        let result = null;
+        try {
+          result = analyse(new Uint8Array(await readFile(sample.path)));
+        } catch (error) {
+          // An unreadable file is recorded as analysed with no estimates, so it
+          // is not retried forever.
+          log('samples.analysis_failed', errorText(error));
+        }
+        // A write that fails must not kill the run silently; it is logged and
+        // the next file is analysed.
+        await db
+          .execute({
+            type: 'analysed',
+            id: sample.id,
+            estimatedKey: result?.key?.key ?? null,
+            estimatedScale: result?.key?.scale ?? null,
+            keyConfidence: result?.key?.confidence ?? null,
+            estimatedTempo: result?.tempo?.bpm ?? null,
+            tempoConfidence: result?.tempo?.confidence ?? null,
+            analysedAt: new Date().toISOString(),
+          })
+          .catch((error) => log('samples.analysis_store_failed', errorText(error)));
+        // Let the interface and any pending IPC breathe between files.
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      library = sampleLibrarySchema.parse(await db.execute({ type: 'library' }));
+    }
+  } finally {
+    analysing = null;
+    library = sampleLibrarySchema.parse(await db.execute({ type: 'library' }));
+  }
+}
 async function invoke(method: IpcMethod, input: unknown): Promise<Snapshot> {
   const value = ipcInputs[method].parse(input);
   await ready;
@@ -280,6 +334,9 @@ async function invoke(method: IpcMethod, input: unknown): Promise<Snapshot> {
       samples = [];
     }
     if (method === 'reindexSamples') await indexRoots(library.roots.map((root) => root.path));
+    // Not awaited: analysis is long, and the producer keeps working meanwhile.
+    if (method === 'analyseSamples') void analyseSamples();
+    if (method === 'stopAnalysis') analysisStopped = true;
     if (method === 'searchSamples') {
       const input = ipcInputs.searchSamples.parse(value);
       samples = z.array(indexedSampleSchema).parse(
@@ -287,6 +344,9 @@ async function invoke(method: IpcMethod, input: unknown): Promise<Snapshot> {
           type: 'searchSamples',
           query: input.query,
           limit: input.limit ?? 25,
+          ...(input.key ? { key: input.key } : {}),
+          ...(input.tempoMin ? { tempoMin: input.tempoMin } : {}),
+          ...(input.tempoMax ? { tempoMax: input.tempoMax } : {}),
         }),
       );
     }
