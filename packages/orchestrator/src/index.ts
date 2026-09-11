@@ -68,6 +68,10 @@ export class Orchestrator {
   }
   useAdapter(id: AdapterId, adapter: DawAdapter) {
     return this.serial(async () => {
+      // Selecting the adapter that is already live is not a change, and should
+      // not read as one: a producer returning to the connection screen and
+      // pressing connect means "take me back", not "swap the session".
+      if (this.connected && id === this.adapterId) return this.state();
       if (this.connected) throw new Error('Disconnect before changing the DAW adapter.');
       this.adapter = adapter;
       this.adapterId = id;

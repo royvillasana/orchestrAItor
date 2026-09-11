@@ -1,8 +1,11 @@
 # audio-analysis Specification
 
 ## Purpose
+
 TBD - created by archiving change add-audio-analysis. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: Decode uncompressed audio without a codec dependency
 
 Analysis SHALL decode WAV and AIFF PCM to mono samples across common bit depths and both byte orders, bound how much audio it reads per file, and decline unsupported or malformed audio without failing that file's index entry.
@@ -77,4 +80,3 @@ Analysis SHALL run after indexing rather than within it, SHALL be cancellable, S
 
 - **WHEN** the application restarts
 - **THEN** estimates persist and are not recomputed
-

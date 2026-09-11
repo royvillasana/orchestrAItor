@@ -177,6 +177,11 @@ export function Studio({ setup = false }: { setup?: boolean }) {
     }
   };
   const connect = async () => {
+    // Already in this session: this is "take me back", not a reconnection.
+    if (unchanged) {
+      router.push('/workspace/');
+      return;
+    }
     const next = await run((api) => api.connect({ adapter, provider: partner }));
     if (next?.runtime?.connected) router.push('/workspace/');
   };
@@ -203,6 +208,15 @@ export function Studio({ setup = false }: { setup?: boolean }) {
     );
   };
   const runtime = data?.runtime;
+  // What is selected here must be what is connected, or returning to this
+  // screen shows a session the producer is not in.
+  useEffect(() => {
+    if (!runtime?.connected) return;
+    setAdapter(runtime.adapter);
+    setPartner(runtime.provider);
+  }, [runtime?.connected, runtime?.adapter, runtime?.provider]);
+  const unchanged =
+    !!runtime?.connected && runtime.adapter === adapter && runtime.provider === partner;
   const connected = !!runtime?.connected;
   // The bridge is offered only when it could actually connect; the reason a
   // producer cannot use it is more useful than a button that always fails.
@@ -591,9 +605,11 @@ export function Studio({ setup = false }: { setup?: boolean }) {
             >
               {busy
                 ? 'Connecting…'
-                : adapter === 'bridge'
-                  ? 'Connect live session'
-                  : 'Open demo studio'}
+                : unchanged
+                  ? 'Back to the studio'
+                  : adapter === 'bridge'
+                    ? 'Connect live session'
+                    : 'Open demo studio'}
               <Icon kind="arrow" />
             </button>
           </div>

@@ -301,12 +301,19 @@ async function control(command: Control): Promise<unknown> {
       await useProvider(command.provider);
       return orchestration.state();
     }
-    case 'connect':
+    case 'connect': {
       await demo.initialize();
       if (command.provider) await useProvider(command.provider);
-      if (command.adapter)
+      if (command.adapter) {
+        const current = (await orchestration.state()).adapter;
+        // Asking for a different adapter while one is live means switching to
+        // it, so the old session is closed first rather than refused.
+        if (current !== command.adapter && (await orchestration.state()).connected)
+          await orchestration.disconnect();
         await orchestration.useAdapter(command.adapter, await buildAdapter(command.adapter));
+      }
       return orchestration.connect();
+    }
     case 'disconnect':
       await active.cancel();
       return orchestration.disconnect();

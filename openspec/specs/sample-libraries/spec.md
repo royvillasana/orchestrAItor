@@ -3,7 +3,9 @@
 ## Purpose
 
 TBD - created by archiving change add-sample-libraries. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: Producer-chosen sample roots
 
 Sample folders SHALL be chosen by the producer through the operating system folder picker, persisted locally, listed with their counts, and removable. No folder SHALL be indexed without having been chosen.
@@ -101,4 +103,3 @@ Search SHALL accept a key and a tempo range in addition to text, rank musical ma
 
 - **WHEN** a musical search runs against a library that has not been analysed
 - **THEN** it explains that analysis has not run rather than reporting no matches
-

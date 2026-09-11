@@ -133,6 +133,20 @@ try {
     () => document.querySelector('[data-testid="tempo"]')?.textContent === '124',
   );
   await page.screenshot({ path: 'artifacts/activity.png', fullPage: true });
+  // Settings and back must not try to reconnect the session it is already in.
+  await page.getByLabel('Connection settings').click();
+  await page.getByRole('heading', { name: 'Your next idea starts here.' }).waitFor();
+  const backLabel = await page
+    .getByRole('button', { name: /Back to the studio|Open demo studio/ })
+    .innerText();
+  assert.match(backLabel, /Back to the studio/, 'A connected session should offer to go back.');
+  await page.getByRole('button', { name: /Back to the studio/ }).click();
+  await page.getByRole('heading', { name: 'Studio conversation' }).waitFor();
+  assert.doesNotMatch(
+    await page.locator('body').innerText(),
+    /Disconnect before changing/,
+    'Returning from settings must not attempt an adapter swap.',
+  );
   const history = await page.evaluate(async () => (await window.orchestra.snapshot({})).history);
   assert.ok(history.messages.length >= 6);
   await app.close();
