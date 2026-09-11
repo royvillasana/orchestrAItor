@@ -227,11 +227,13 @@ Data lives in Electron's OS application-data directory under `OrchestrAI`:
 
 - macOS: `~/Library/Application Support/OrchestrAI/`
 - Windows: `%APPDATA%/OrchestrAI/`
-- `orchestrai.sqlite`: settings, conversations, messages, tool calls, transactions, sample roots and index, generated clips, and migration versions (schema 3).
+- `orchestrai.sqlite`: settings, conversations, messages, tool calls, transactions, sample roots and index, generated clips, and migration versions (schema 4).
 - `artifacts/`: generated MIDI clips, one file per clip.
 - `events.jsonl`: structured local diagnostics with secret patterns redacted.
 
 SQLite runs through `sql.js` in a worker, avoiding native Electron ABI rebuilds. Each mutation commits and writes an atomic checkpoint before acknowledging durability. This is appropriate for the skeleton's metadata; large sample catalogs will need a storage performance review before Milestone 3. One application instance owns the database. The database is local but not encrypted, so conversations should not contain API credentials. No API-key entry/storage is implemented yet; future credentials must use the OS credential store.
+
+A stored row the current schema cannot read is left out of history and reported, rather than making the whole database unavailable: one unreadable row should not cost a producer their conversations. Migration 004 handles history written before track volume changed meaning — it drops those snapshots rather than converting a decibel figure into a fader position, which would be the same guess this project refused to make for live values.
 
 Runtime failure disables writes and offers **Restart runtime**, followed by an explicit mock connection. History is retained; unfinished calls become interrupted or unknown-outcome and are never replayed. A fresh runtime starts from fixture tempo/state. Historical Undo controls are unavailable in a new session. Migration failures preserve the existing database and surface an error rather than deleting or recreating it. Back up the closed application's data directory before manual maintenance.
 

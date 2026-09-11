@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { mkdtemp, readFile, writeFile, mkdir, symlink } from 'node:fs/promises';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
 import path from 'node:path';
@@ -10,9 +10,10 @@ import {
   migrate,
   migration,
   migration002,
+  migration003,
   SCHEMA_VERSION,
 } from '../apps/desktop/electron/store';
-import { artifactSchema } from '../packages/shared-types/src';
+import { artifactSchema, activitySchema } from '../packages/shared-types/src';
 import {
   trustedURL,
   trustedSender,
@@ -209,6 +210,97 @@ describe('SQLite persistence', () => {
     expect(store.searchSamples('guess', 10).map((sample) => sample.name)).toEqual(['guess.wav']);
     await store.close();
   });
+  it('opens history written before track volume changed meaning', async () => {
+    const init: typeof import('sql.js').default = require('sql.js');
+    const SQL = await init({ locateFile: () => wasm });
+    const db = new SQL.Database();
+    migrate(db, migration, { 2: migration002, 3: migration003 });
+    // An activity recorded when volume was a decibel figure: a snapshot in
+    // `before`, and another nested inside the tool result.
+    const legacyTracks = [
+      { id: 'kick', name: 'Kick', type: 'audio', mute: false, solo: false, volume: -4.2 },
+    ];
+    const project = {
+      name: 'After hours',
+      tempo: 122,
+      key: 'A minor',
+      timeSignature: '4/4',
+      playing: false,
+      revision: 2,
+      mock: true,
+      tracks: legacyTracks,
+    };
+    const legacy = {
+      id: 'call-1',
+      sessionId: 's',
+      conversationId: 'c',
+      agent: 'demo',
+      tool: 'transport.play',
+      arguments: {},
+      status: 'succeeded',
+      timestamp: new Date().toISOString(),
+      detail: 'Playing',
+      undoable: true,
+      before: project,
+      result: { project },
+    };
+    db.run('INSERT INTO tool_calls VALUES(?,?)', ['call-1', JSON.stringify(legacy)]);
+    db.run('INSERT INTO transactions VALUES(?,?)', ['call-1', JSON.stringify(legacy)]);
+    db.run("INSERT INTO messages VALUES('m1', ?)", [
+      JSON.stringify({
+        id: 'm1',
+        conversationId: 'c',
+        role: 'user',
+        content: 'hello',
+        provider: 'You',
+        timestamp: new Date().toISOString(),
+      }),
+    ]);
+    // Before the migration this row makes the whole database unreadable.
+    expect(activitySchema.safeParse(legacy).success).toBe(false);
+
+    migrate(db);
+    const migrated = JSON.parse(String(db.exec('SELECT json FROM tool_calls')[0].values[0][0]));
+    // The snapshot goes, because a decibel figure cannot be converted
+    // faithfully; what a producer reads is kept.
+    expect(migrated.before).toBeUndefined();
+    expect(migrated.result).toBeUndefined();
+    expect(migrated).toMatchObject({
+      tool: 'transport.play',
+      status: 'succeeded',
+      detail: 'Playing',
+    });
+    expect(activitySchema.safeParse(migrated).success).toBe(true);
+    expect(
+      JSON.parse(String(db.exec('SELECT json FROM transactions')[0].values[0][0])).before,
+    ).toBeUndefined();
+    db.close();
+  });
+  it('drops an unreadable row rather than the whole history', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'orchestrai-unreadable-'));
+    const file = path.join(directory, 'orchestrai.sqlite');
+    const store = await LocalStore.open(file, wasm);
+    store.execute({
+      type: 'conversation',
+      conversation: { id: 'c1', title: 'Real', timestamp: new Date().toISOString() },
+    });
+    await store.close();
+
+    const init: typeof import('sql.js').default = require('sql.js');
+    const SQL = await init({ locateFile: () => wasm });
+    const db = new SQL.Database(readFileSync(file));
+    // Something the current schema cannot read, whatever the reason.
+    db.run("INSERT INTO tool_calls VALUES('broken', ?)", [JSON.stringify({ nonsense: true })]);
+    writeFileSync(file, Buffer.from(db.export()));
+    db.close();
+
+    const reopened = await LocalStore.open(file, wasm);
+    const history = reopened.history();
+    // One bad row must not cost a producer their conversations.
+    expect(history.conversations.map((conversation) => conversation.title)).toEqual(['Real']);
+    expect(history.activities).toEqual([]);
+    await reopened.close();
+  });
   it('preserves corrupt files instead of resetting user data', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'orchestrai-corrupt-'));
     const file = path.join(dir, 'studio.sqlite');
@@ -298,7 +390,10 @@ describe('SQLite persistence', () => {
     db.run('INSERT INTO conversations VALUES(\'c1\', \'{"id":"c1"}\')');
     db.run("INSERT INTO samples VALUES('s1', '/root', '{\"id\":\"s1\"}')");
     migrate(db);
-    expect(Number(db.exec('SELECT MAX(version) FROM schema_migrations')[0].values[0][0])).toBe(3);
+    // Whatever the build currently targets, not a number frozen in the test.
+    expect(Number(db.exec('SELECT MAX(version) FROM schema_migrations')[0].values[0][0])).toBe(
+      SCHEMA_VERSION,
+    );
     expect(db.exec('SELECT id FROM conversations')[0].values).toEqual([['c1']]);
     expect(db.exec('SELECT id FROM samples')[0].values).toEqual([['s1']]);
     expect(db.exec('SELECT COUNT(*) FROM artifacts')[0].values).toEqual([[0]]);

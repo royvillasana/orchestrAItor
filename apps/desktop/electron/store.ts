@@ -15,6 +15,8 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import {
   activitySchema,
+  conversationSchema,
+  messageSchema,
   historySchema,
   indexedSampleSchema,
   artifactSchema,
@@ -60,7 +62,64 @@ export const migration003 = `
 CREATE TABLE artifacts(id TEXT PRIMARY KEY, json TEXT NOT NULL);
 INSERT INTO schema_migrations VALUES(3);
 `;
-export const MIGRATIONS: Record<number, string> = { 2: migration002, 3: migration003 };
+/**
+ * Track volume changed meaning: it was a decibel figure the mock invented, and
+ * became the normalized fader position a DAW reports. History written before
+ * that change holds values the schema now refuses, which stopped the database
+ * opening at all.
+ *
+ * A stored decibel figure cannot be converted faithfully — reproducing a fader
+ * taper is the guess this project refused to make for live values, and making
+ * it for history would be no better. So the unreadable part is dropped: the
+ * snapshot goes, and the activity keeps its tool, status, detail, and time,
+ * which is what a producer reads. Those snapshots could not have restored
+ * anything anyway; their revision no longer matches the session.
+ */
+export const migration004 = 'INSERT INTO schema_migrations VALUES(4);';
+function carriesLegacyVolume(value: unknown, depth = 0): boolean {
+  if (depth > 4 || value === null || typeof value !== 'object') return false;
+  const record = value as Record<string, unknown>;
+  const tracks = record.tracks;
+  if (
+    Array.isArray(tracks) &&
+    tracks.some(
+      (track) =>
+        typeof (track as { volume?: unknown }).volume === 'number' &&
+        ((track as { volume: number }).volume < 0 || (track as { volume: number }).volume > 1),
+    )
+  )
+    return true;
+  return Object.values(record).some((nested) => carriesLegacyVolume(nested, depth + 1));
+}
+export function stripLegacySnapshots(db: Database) {
+  for (const table of ['tool_calls', 'transactions']) {
+    const rows = db.exec(`SELECT id, json FROM ${table}`)[0]?.values ?? [];
+    for (const [id, raw] of rows) {
+      let record: Record<string, unknown>;
+      try {
+        record = JSON.parse(String(raw)) as Record<string, unknown>;
+      } catch {
+        continue;
+      }
+      let changed = false;
+      // Any field may carry a project snapshot — before, after, and the tool
+      // result all do — so the search is by shape rather than by field name.
+      for (const key of Object.keys(record)) {
+        if (carriesLegacyVolume(record[key])) {
+          delete record[key];
+          changed = true;
+        }
+      }
+      if (changed)
+        db.run(`UPDATE ${table} SET json=? WHERE id=?`, [JSON.stringify(record), String(id)]);
+    }
+  }
+}
+export const MIGRATIONS: Record<number, string> = {
+  2: migration002,
+  3: migration003,
+  4: migration004,
+};
 /** The schema this build targets: whatever the last migration it ships reaches. */
 export const SCHEMA_VERSION = Math.max(1, ...Object.keys(MIGRATIONS).map(Number));
 export function migrate(
@@ -99,6 +158,8 @@ export function migrate(
       throw new Error(
         'Unsupported database schema; preserve this file and use a compatible application version.',
       );
+    // Some migrations rewrite rows rather than adding tables.
+    if (next === 4) stripLegacySnapshots(db);
     apply(statements);
     version = next;
   }
@@ -148,13 +209,38 @@ export class LocalStore {
   }
   history() {
     const mode = this.db.exec("SELECT value FROM settings WHERE key='mode'")[0]?.values[0]?.[0];
-    return historySchema.parse({
-      conversations: this.rows('conversations'),
-      messages: this.rows('messages'),
-      activities: this.rows('tool_calls'),
+    // One unreadable row must not cost a producer their whole history. A row
+    // that no longer validates is dropped and reported, and the rest opens.
+    const readable = <T>(
+      rows: unknown[],
+      schema: { safeParse(value: unknown): { success: boolean; data?: T } },
+    ) => {
+      const kept: T[] = [];
+      for (const row of rows) {
+        const parsed = schema.safeParse(row);
+        if (parsed.success && parsed.data !== undefined) kept.push(parsed.data);
+        else this.dropped++;
+      }
+      return kept;
+    };
+    const history = {
+      conversations: readable(this.rows('conversations'), conversationSchema),
+      messages: readable(this.rows('messages'), messageSchema),
+      activities: readable(this.rows('tool_calls'), activitySchema),
       mode,
-    });
+    };
+    if (this.dropped > 0) {
+      this.log({
+        timestamp: new Date().toISOString(),
+        level: 'error',
+        event: 'history.unreadable_rows',
+        detail: `${this.dropped} stored row(s) could not be read and were left out of history.`,
+      });
+      this.dropped = 0;
+    }
+    return historySchema.parse(history);
   }
+  private dropped = 0;
   private artifactDirectory() {
     const directory = path.join(path.dirname(this.file), 'artifacts');
     mkdirSync(directory, { recursive: true, mode: 0o700 });
