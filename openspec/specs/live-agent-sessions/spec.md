@@ -3,9 +3,7 @@
 ## Purpose
 
 TBD - created by archiving change add-live-agent-sessions. Update Purpose after archive.
-
 ## Requirements
-
 ### Requirement: Explicit authentication verification
 
 Verification SHALL be a user-initiated action that runs only the CLI's own authentication status command, with a timeout and bounded output. It SHALL report logged-in state, account identity where the CLI provides it, and the CLI version. Discovery SHALL continue to execute nothing.
@@ -60,22 +58,27 @@ Tool calls arriving from an external agent process SHALL be validated, capabilit
 
 ### Requirement: Live provider sessions
 
-A live provider SHALL run its CLI non-interactively, parse its event stream into assistant output and tool activity, bound the number of turns, and return typed failures for unauthenticated, missing, crashed, timed-out, or unparseable CLI behavior. Unknown events SHALL be ignored rather than aborting a session. During an autonomous run the provider SHALL be told which tools it may use without approval, which still require it, and what remains of the run's budget.
+A live provider SHALL run its CLI non-interactively, parse its event stream into assistant output and tool activity, bound the number of turns, and return typed failures for unauthenticated, missing, crashed, timed-out, or unparseable CLI behavior. Unknown events SHALL be ignored rather than aborting a session. Where the CLI supports it, assistant text SHALL be reported as it is produced rather than only when a block completes, and the provider SHALL assemble the running text so consumers do not depend on how a given CLI divides its output. During an autonomous run the provider SHALL be told which tools it may use without approval, which still require it, and what remains of the run's budget.
 
-#### Scenario: Live answer with a tool call
+#### Scenario: Text arrives as it is written
 
-- **WHEN** a live agent answers a request that needs project state
-- **THEN** its tool call and its answer appear in the transcript attributed to that provider
+- **WHEN** a live agent produces a long reply on a CLI that streams partial messages
+- **THEN** the transcript fills in as it is produced rather than after the reply completes
+
+#### Scenario: A CLI that streams only whole blocks
+
+- **WHEN** a CLI reports completed blocks rather than deltas
+- **THEN** the transcript still fills in progressively and nothing is duplicated
+
+#### Scenario: Persistence is unchanged
+
+- **WHEN** a streamed turn completes
+- **THEN** the stored message is written once from the completed output, not from the display buffer
 
 #### Scenario: CLI fails mid-turn
 
 - **WHEN** the CLI exits unexpectedly during a turn
 - **THEN** the turn fails with the reason, history is preserved, and retrying is an explicit action
-
-#### Scenario: Told the limits of a run
-
-- **WHEN** a turn runs inside an autonomous run
-- **THEN** the agent is told what it may do without asking and what remains of the budget
 
 ### Requirement: Cancellation stops the live session
 
@@ -103,3 +106,4 @@ Messages and activity SHALL record the provider and model that produced them. Th
 
 - **WHEN** a conversation containing both demo and live turns is reopened
 - **THEN** each message states which provider produced it
+

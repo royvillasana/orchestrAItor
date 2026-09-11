@@ -201,7 +201,6 @@ const channel = new AgentToolChannel({
   },
 });
 let agentConversationId = '';
-let streamed = '';
 /** Display-only: the persisted message is still written once, at turn end. */
 function emit(chunk: { conversationId: string; text: string; done: boolean }) {
   if (!process.send || !chunk.conversationId) return;
@@ -229,10 +228,8 @@ async function useProvider(id: ProviderId) {
       id,
       name: providerNames[id],
       executable,
-      onDelta: (text) => {
-        streamed += (streamed ? '\n\n' : '') + text;
-        emit({ conversationId: agentConversationId, text: streamed, done: false });
-      },
+      // The provider assembles; this forwards what it has so far.
+      onDelta: (text) => emit({ conversationId: agentConversationId, text, done: false }),
       proxyEntry: path.join(path.dirname(process.argv[1]), 'agent-mcp.cjs'),
       nodeExecutable: process.execPath,
       channelAddress: channel.address,
@@ -352,7 +349,6 @@ async function control(command: Control): Promise<unknown> {
         );
         if (!conversation) throw new Error('Conversation not found.');
         agentConversationId = conversation.id;
-        streamed = '';
         // A live agent is told the limits it is working inside, so it does not
         // have to discover them by hitting them.
         const runState = (await orchestration.state()).run;
@@ -400,8 +396,7 @@ async function control(command: Control): Promise<unknown> {
       } finally {
         chatting = false;
         // The turn is over however it ended; the transcript owns the text now.
-        emit({ conversationId: agentConversationId, text: streamed, done: true });
-        streamed = '';
+        emit({ conversationId: agentConversationId, text: '', done: true });
       }
     }
   }

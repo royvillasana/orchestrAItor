@@ -115,6 +115,7 @@ describe('live provider', () => {
     toolCalls: [] as { name: string; input: unknown }[],
     model: null as string | null,
     error: null as string | null,
+    streamed: '',
   });
   it('reads assistant text, tool calls, and model from a Claude Code stream', () => {
     const state = events();
@@ -209,6 +210,31 @@ describe('live provider', () => {
     expect(prompt).toContain('mcp__orchestrai__project.set_tempo');
     expect(prompt).toMatch(/never claim a change was applied/i);
   });
+  it('streams token deltas where the CLI sends them, without repeating the block', () => {
+    const state = events();
+    const deltas: string[] = [];
+    const delta = (text: string) =>
+      JSON.stringify({
+        type: 'stream_event',
+        event: { type: 'content_block_delta', delta: { type: 'text_delta', text } },
+      });
+    readClaudeEvent(delta('One'), state, (text) => deltas.push(text));
+    readClaudeEvent(delta(', two, three'), state, (text) => deltas.push(text));
+    readClaudeEvent(delta('.'), state, (text) => deltas.push(text));
+    expect(deltas).toEqual(['One', 'One, two, three', 'One, two, three.']);
+    // The completed block repeats what already streamed; it must not double up.
+    readClaudeEvent(
+      JSON.stringify({
+        type: 'assistant',
+        message: { content: [{ type: 'text', text: 'One, two, three.' }] },
+      }),
+      state,
+      (text) => deltas.push(text),
+    );
+    expect(state.streamed).toBe('One, two, three.');
+    // The stored message still comes from the completed block.
+    expect(state.text).toEqual(['One, two, three.']);
+  });
   it('reports assistant text as it arrives, so the transcript can show it live', () => {
     const state = events();
     const deltas: string[] = [];
@@ -236,8 +262,8 @@ describe('live provider', () => {
       state,
       (text) => deltas.push(text),
     );
-    // Only assistant text streams; a tool call is activity, not prose.
-    expect(deltas).toEqual(['Looking at the session…', 'It is at 120 BPM.']);
+    // The provider assembles, so each emission is the text so far.
+    expect(deltas).toEqual(['Looking at the session…', 'Looking at the session…It is at 120 BPM.']);
     const codexState = events();
     const codexDeltas: string[] = [];
     readCodexEvent(
@@ -261,7 +287,9 @@ describe('live provider', () => {
       text,
     ) => deltas.push(text);
     const response = await provider.sendMessage(conversation, tools);
-    expect(deltas).toEqual(['first', 'second']);
+    // Text so far on each emission, and the stored message from completed
+    // blocks rather than from the display buffer.
+    expect(deltas).toEqual(['first', 'firstsecond']);
     expect(response.text).toBe('first\n\nsecond');
   });
   it('asks the latest question, not the one the conversation was named after', () => {

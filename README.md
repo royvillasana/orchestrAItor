@@ -265,4 +265,4 @@ For development-mode smoke verification, start `pnpm --filter @orchestrai/deskto
 
 ## Next milestones
 
-API credential storage, plugin operations, and token-level streaming into the transcript remain separate integrations. The active implementation checklist is `openspec/changes/add-cubase-midi-bridge/tasks.md`; Milestone 1 is archived under `openspec/changes/archive/`.
+API credential storage and plugin operations remain. Every completed change is archived under `openspec/changes/archive/`, and `openspec/specs/` describes what the application does today.

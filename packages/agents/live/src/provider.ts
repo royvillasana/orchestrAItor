@@ -51,6 +51,19 @@ interface TurnEvents {
   toolCalls: { name: string; input: unknown }[];
   model: string | null;
   error: string | null;
+  /**
+   * What to show while the turn runs. Assembled here so no consumer has to know
+   * whether a CLI streams per token, per block, or once at the end. The stored
+   * message is still built from `text`, which holds completed output only.
+   */
+  streamed: string;
+}
+/** Appends unless this text has already been streamed. */
+export function streamText(events: TurnEvents, text: string, onDelta?: (text: string) => void) {
+  if (!text || events.streamed.endsWith(text)) return;
+  events.streamed +=
+    events.streamed && !/\s$/.test(events.streamed) && !/^\s/.test(text) ? text : text;
+  onDelta?.(events.streamed);
 }
 /** Parses one line of a CLI's event stream; unknown shapes are ignored. */
 export function readClaudeEvent(
@@ -60,6 +73,15 @@ export function readClaudeEvent(
 ) {
   const parsed = JSON.parse(line) as Record<string, unknown>;
   const type = parsed.type;
+  // Partial messages: the text as the model writes it.
+  if (type === 'stream_event') {
+    const event = parsed.event as
+      | { type?: string; delta?: { type?: string; text?: string } }
+      | undefined;
+    if (event?.type === 'content_block_delta' && event.delta?.type === 'text_delta')
+      streamText(events, event.delta.text ?? '', onDelta);
+    return;
+  }
   if (type === 'system' && typeof parsed.model === 'string') events.model = parsed.model;
   if (type === 'assistant' || type === 'user') {
     const message = parsed.message as { content?: unknown; model?: unknown } | undefined;
@@ -68,7 +90,10 @@ export function readClaudeEvent(
       const item = block as { type?: string; text?: string; name?: string; input?: unknown };
       if (item.type === 'text' && typeof item.text === 'string' && type === 'assistant') {
         events.text.push(item.text);
-        onDelta?.(item.text);
+        // Already streamed as deltas where the CLI sends them; appended here
+        // where it does not. Compared rather than flagged, so a CLI that does
+        // both still reads correctly.
+        streamText(events, item.text, onDelta);
       }
       if (item.type === 'tool_use' && typeof item.name === 'string')
         events.toolCalls.push({ name: item.name, input: item.input });
@@ -99,7 +124,7 @@ export function readCodexEvent(line: string, events: TurnEvents, onDelta?: (text
         : null;
   if (type === 'agent_message' && body) {
     events.text.push(body);
-    onDelta?.(body);
+    streamText(events, body, onDelta);
   }
   if (type === 'mcp_tool_call_begin' || type === 'mcp_tool_call') {
     const invocation = (payload.invocation ?? payload) as {
@@ -195,6 +220,8 @@ export class LiveAgentProvider implements AgentProvider {
       '--print',
       '--output-format',
       'stream-json',
+      // Text as the model writes it, rather than when a block completes.
+      '--include-partial-messages',
       '--verbose',
       '--mcp-config',
       this.mcpConfig(),
@@ -219,7 +246,13 @@ export class LiveAgentProvider implements AgentProvider {
     await this.initialize();
     this.cancelled = false;
     const prompt = buildPrompt(conversation, tools, run);
-    const events: TurnEvents = { text: [], toolCalls: [], model: null, error: null };
+    const events: TurnEvents = {
+      text: [],
+      toolCalls: [],
+      model: null,
+      error: null,
+      streamed: '',
+    };
     const read = this.id === 'codex' ? readCodexEvent : readClaudeEvent;
     const child = this.spawnProcess(this.options.executable, this.args(prompt), {
       cwd: this.workingDirectory ?? undefined,
