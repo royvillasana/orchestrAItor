@@ -780,6 +780,36 @@ export function Studio({ setup = false }: { setup?: boolean }) {
                     style={{ width: `${Math.round(track.volume * 100)}%` }}
                   />
                 </div>
+                {track.plugin && (
+                  <div className="ml-6 mt-2 space-y-1">
+                    <div className="flex items-center gap-2 text-[10px]">
+                      <span
+                        className={track.plugin.bypassed ? 'text-muted line-through' : 'text-muted'}
+                      >
+                        {track.plugin.name}
+                      </span>
+                      {track.plugin.bypassed && <span className="text-warm">bypassed</span>}
+                    </div>
+                    {/* Only what the session has mapped: other parameters are
+                        not reachable, and an empty row would imply they were. */}
+                    {track.plugin.quickControls.map((control) => (
+                      <div key={control.index} className="flex items-center gap-2">
+                        <span className="w-16 shrink-0 truncate text-[9px] text-muted/70">
+                          {control.name}
+                        </span>
+                        <span className="h-0.5 flex-1 rounded bg-line">
+                          <span
+                            className="block h-0.5 rounded bg-accent/40"
+                            style={{ width: `${Math.round(control.value * 100)}%` }}
+                          />
+                        </span>
+                        <span className="w-7 shrink-0 text-right font-mono text-[9px] text-muted/60">
+                          {Math.round(control.value * 100)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
             {project?.tracksTruncated && (

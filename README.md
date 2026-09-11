@@ -112,6 +112,10 @@ The MIDI backend is an **optional** dependency, deliberately not installed by de
 
 A connected session reports its channels — name, level, mute, solo — read from Cubase's own callbacks rather than from what the driver script last wrote, so a fader moved by hand in Cubase is reflected rather than overwritten. `track.set_volume`, `track.set_mute`, and `track.set_solo` address one track by id, take the same approval as any other write, and are refused before anything is sent if the named track is not in the reported state.
 
+Each track also reports its instrument plugin — name, bypass state, and the **quick controls** the session exposes — and `plugin.set_bypass` and `plugin.set_quick_control` change them under the same approval as any other write.
+
+Quick controls are the surface, deliberately. A plugin has hundreds of parameters and the MIDI Remote API offers eight mapped ones per channel; reaching the rest would need a plugin parameter database this project cannot verify, and a wrong parameter moved in a producer's session is worse than one that was never reachable. A control the session has not mapped is reported as unmapped and refused on write, rather than shown as a nameless slot. Values are normalized 0 to 1 for the same reason volume is: a plugin's own units differ per plugin and per parameter. Loading, removing, or replacing plugins, insert slots beyond the instrument, and presets remain out of scope.
+
 **Volume is the fader position, 0 to 1, not decibels.** Converting would mean reproducing Steinberg's fader taper, which this project would be guessing at, and a wrong decibel figure reads as authoritative in a way an honest normalized one does not. The interface shows a percentage; Cubase shows the decibels, correctly.
 
 The bank covers the first 16 channels of audio, instrument, MIDI, group, and FX kinds. A larger session is reported as truncated rather than as though the list were the whole project. Creating, renaming, and reordering tracks, sends, inserts, EQ, and automation remain out of scope.
@@ -265,4 +269,4 @@ For development-mode smoke verification, start `pnpm --filter @orchestrai/deskto
 
 ## Next milestones
 
-API credential storage and plugin operations remain. Every completed change is archived under `openspec/changes/archive/`, and `openspec/specs/` describes what the application does today.
+API credential storage remains. Every completed change is archived under `openspec/changes/archive/`, and `openspec/specs/` describes what the application does today.

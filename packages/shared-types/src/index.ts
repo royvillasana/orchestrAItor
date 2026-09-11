@@ -130,6 +130,7 @@ export const AGENT_MODE_TOOLS = [
   'track.set_volume',
   'track.set_mute',
   'track.set_solo',
+  'plugin.set_quick_control',
 ] as const;
 export const capabilitySchema = z
   .object({
@@ -161,6 +162,30 @@ export const projectSchema = z
           // mean guessing at Steinberg's taper, and a wrong dB figure reads as
           // authoritative in a way a normalized one does not.
           volume: z.number().min(0).max(1),
+          /** The instrument plugin on this channel, where the session has one. */
+          plugin: z
+            .object({
+              name: z.string().max(120),
+              bypassed: z.boolean(),
+              /**
+               * What the session exposes, not every parameter the plugin has.
+               * Values are normalized for the same reason volume is.
+               */
+              quickControls: z
+                .array(
+                  z
+                    .object({
+                      index: z.number().int().min(0).max(7),
+                      name: z.string().max(60),
+                      value: z.number().min(0).max(1),
+                    })
+                    .strict(),
+                )
+                .max(8),
+            })
+            .strict()
+            .nullable()
+            .optional(),
         })
         .strict(),
     ),
@@ -178,6 +203,8 @@ export const toolNames = [
   'track.set_volume',
   'track.set_mute',
   'track.set_solo',
+  'plugin.set_bypass',
+  'plugin.set_quick_control',
   'samples.search',
   'samples.stats',
   'midi.create_clip',
@@ -209,6 +236,14 @@ export const toolSchemas = {
   'track.set_volume': z.object({ trackId: idSchema, volume: z.number().min(0).max(1) }).strict(),
   'track.set_mute': z.object({ trackId: idSchema, mute: z.boolean() }).strict(),
   'track.set_solo': z.object({ trackId: idSchema, solo: z.boolean() }).strict(),
+  'plugin.set_bypass': z.object({ trackId: idSchema, bypassed: z.boolean() }).strict(),
+  'plugin.set_quick_control': z
+    .object({
+      trackId: idSchema,
+      index: z.number().int().min(0).max(7),
+      value: z.number().min(0).max(1),
+    })
+    .strict(),
   'samples.search': z
     .object({
       query: z.string().trim().max(120).optional(),

@@ -22,6 +22,8 @@ export interface CubasePeerTrack {
   volume: number;
   mute: boolean;
   solo: boolean;
+  plugin?: string;
+  quickControls?: { index: number; name: string; value: number }[];
 }
 export const DEFAULT_TRACKS: CubasePeerTrack[];
 export function startCubasePeer(options?: {

@@ -12,6 +12,10 @@ export async function availableToolDefinitions(orchestrator: Orchestrator) {
       "Set one track's fader position, from 0 to 1. Requires user approval in Assist.",
     'track.set_mute': 'Mute or unmute one track. Requires user approval in Assist.',
     'track.set_solo': 'Solo or unsolo one track. Requires user approval in Assist.',
+    'plugin.set_bypass':
+      "Bypass or un-bypass a track's instrument plugin. Requires approval in Assist.",
+    'plugin.set_quick_control':
+      "Set one of a track's quick controls, 0 to 1. Quick controls are the parameters the producer has mapped in Cubase; other plugin parameters are not reachable. Requires approval in Assist.",
     'midi.create_clip':
       'Generate a MIDI clip — chords, bass, or drums — as a file the producer drags onto a track. Key, scale, and tempo default to the connected session. This writes a file; it does not change the project, and it requires user approval in Assist.',
   };
@@ -58,6 +62,35 @@ export async function availableToolDefinitions(orchestrator: Orchestrator) {
         solo: { type: 'boolean' },
       },
       required: ['trackId', 'solo'],
+      additionalProperties: false,
+    },
+    'plugin.set_bypass': {
+      type: 'object' as const,
+      properties: {
+        trackId: { type: 'string', description: 'The id from project.get_state.' },
+        bypassed: { type: 'boolean' },
+      },
+      required: ['trackId', 'bypassed'],
+      additionalProperties: false,
+    },
+    'plugin.set_quick_control': {
+      type: 'object' as const,
+      properties: {
+        trackId: { type: 'string', description: 'The id from project.get_state.' },
+        index: {
+          type: 'number',
+          minimum: 0,
+          maximum: 7,
+          description: 'The quick control index reported for that track.',
+        },
+        value: {
+          type: 'number',
+          minimum: 0,
+          maximum: 1,
+          description: 'Normalized, not plugin units.',
+        },
+      },
+      required: ['trackId', 'index', 'value'],
       additionalProperties: false,
     },
     'midi.create_clip': {

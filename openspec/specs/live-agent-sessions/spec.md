@@ -3,7 +3,9 @@
 ## Purpose
 
 TBD - created by archiving change add-live-agent-sessions. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: Explicit authentication verification
 
 Verification SHALL be a user-initiated action that runs only the CLI's own authentication status command, with a timeout and bounded output. It SHALL report logged-in state, account identity where the CLI provides it, and the CLI version. Discovery SHALL continue to execute nothing.
@@ -106,4 +108,3 @@ Messages and activity SHALL record the provider and model that produced them. Th
 
 - **WHEN** a conversation containing both demo and live turns is reopened
 - **THEN** each message states which provider produced it
-

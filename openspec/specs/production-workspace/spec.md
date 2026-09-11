@@ -3,9 +3,7 @@
 ## Purpose
 
 TBD - created by archiving change setup-orchestrai-desktop. Update Purpose after archive.
-
 ## Requirements
-
 ### Requirement: Honest connection setup
 
 The connection screen SHALL offer Cubase 14 Mock, refreshable agent discovery, an explicitly selectable Demo agent, and clear unavailable labels for future DAWs, live provider sessions, and sample-library features.
@@ -172,3 +170,18 @@ While a run is active the interface SHALL show what it has done, what remains of
 
 - **WHEN** a run ends
 - **THEN** its outcome, the reason it ended, and an undo for the whole run are shown
+
+### Requirement: Plugin view for a track
+
+The workspace SHALL show a track's instrument plugin, its bypass state, and its mapped quick controls with names and values, and SHALL say plainly when a track carries no plugin.
+
+#### Scenario: Track with a plugin
+
+- **WHEN** a track carrying a plugin is shown
+- **THEN** its plugin name, bypass state, and mapped quick controls are visible
+
+#### Scenario: Track with none
+
+- **WHEN** a track carries no plugin
+- **THEN** the interface says so rather than showing an empty control grid
+

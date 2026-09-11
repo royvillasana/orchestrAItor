@@ -7,7 +7,16 @@ import { decodeFrame, encodeFrame } from '../packages/adapters/cubase/src';
 
 const require_ = createRequire(import.meta.url);
 type SysexHandler = (device: unknown, sysex: number[]) => void;
+interface StubQuickControl {
+  mOnTitleChange: (d: unknown, m: unknown, objectTitle: string, valueTitle: string) => void;
+  mOnProcessValueChange: (d: unknown, m: unknown, v: number) => void;
+}
 interface StubChannel {
+  _quickControls: StubQuickControl[];
+  mInstrumentPluginSlot: {
+    mBypass: { mOnProcessValueChange: (d: unknown, m: unknown, v: number) => void };
+    mOnTitleChange: (d: unknown, m: unknown, title: string) => void;
+  };
   mValue: {
     mVolume: { mOnProcessValueChange: (d: unknown, m: unknown, v: number) => void };
     mMute: { mOnProcessValueChange: (d: unknown, m: unknown, v: number) => void };
@@ -86,7 +95,11 @@ describe('driver script inside a Cubase-shaped host', () => {
     const bindings = api.log.filter((entry) => entry.call === 'makeValueBinding');
     expect(bindings.filter((entry) => /^bridge/.test(String(entry.surfaceValue)))).toHaveLength(2);
     // One bank of sixteen channels, each with volume, mute, and solo.
-    expect(bindings.filter((entry) => /^track/.test(String(entry.surfaceValue)))).toHaveLength(48);
+    // One bank of sixteen: volume, mute, solo, bypass, and eight quick
+    // controls per channel.
+    expect(bindings.filter((entry) => /^track/.test(String(entry.surfaceValue)))).toHaveLength(
+      16 * 12,
+    );
     expect(typeof api.driver._input.mOnSysex).toBe('function');
   });
   it('answers a handshake over SysEx', () => {
@@ -154,8 +167,24 @@ describe('driver script inside a Cubase-shaped host', () => {
       lastResponse(api) as { result: { project: { tracks: unknown[]; tracksTruncated: boolean } } }
     ).result.project;
     expect(project.tracks).toEqual([
-      { id: 'track-0', name: 'Kick', type: 'audio', mute: false, solo: false, volume: 0.82 },
-      { id: 'track-1', name: 'Sub bass', type: 'audio', mute: true, solo: false, volume: 0.6 },
+      {
+        id: 'track-0',
+        name: 'Kick',
+        type: 'audio',
+        mute: false,
+        solo: false,
+        volume: 0.82,
+        plugin: null,
+      },
+      {
+        id: 'track-1',
+        name: 'Sub bass',
+        type: 'audio',
+        mute: true,
+        solo: false,
+        volume: 0.6,
+        plugin: null,
+      },
     ]);
     expect(project.tracksTruncated).toBe(false);
   });
@@ -194,6 +223,67 @@ describe('driver script inside a Cubase-shaped host', () => {
     expect(lastResponse(api)).toMatchObject({
       ok: false,
       error: expect.stringContaining('no track'),
+    });
+    expect(api.log.some((entry) => entry.call === 'setProcessValue')).toBe(false);
+  });
+  it('reports a plugin and only the quick controls the session has mapped', () => {
+    const device = { id: 'device' };
+    const channel = api.driver._channels[1];
+    channel.mInstrumentPluginSlot.mOnTitleChange(device, {}, 'Retrologue');
+    channel._quickControls[0].mOnTitleChange(device, {}, 'Filter', 'Cutoff');
+    channel._quickControls[0].mOnProcessValueChange(device, {}, 0.62);
+    // Mapped with no name is not a control anyone assigned.
+    channel._quickControls[3].mOnProcessValueChange(device, {}, 0.4);
+    api.driver._input.mOnSysex(device, request(30, { op: 'get_state' }));
+    const tracks = (lastResponse(api) as { result: { project: { tracks: { plugin: unknown }[] } } })
+      .result.project.tracks;
+    expect(tracks[1].plugin).toEqual({
+      name: 'Retrologue',
+      bypassed: false,
+      quickControls: [{ index: 0, name: 'Cutoff', value: 0.62 }],
+    });
+    // A track Cubase filled with no instrument reports no plugin at all.
+    expect(tracks[0].plugin).toBe(null);
+  });
+  it('writes a quick control through its bound surface value', () => {
+    api.log.length = 0;
+    api.driver._input.mOnSysex(
+      { id: 'device' },
+      request(31, {
+        op: 'execute',
+        tool: 'plugin.set_quick_control',
+        arguments: { trackId: 'track-1', index: 0, value: 0.25 },
+      }),
+    );
+    const write = [...api.log].reverse().find((entry) => entry.call === 'setProcessValue');
+    expect(write).toMatchObject({ name: 'trackQuick1_0', value: 0.25 });
+    expect(lastResponse(api)).toMatchObject({ ok: true });
+  });
+  it('refuses an unmapped control and a track with no plugin', () => {
+    api.log.length = 0;
+    api.driver._input.mOnSysex(
+      { id: 'device' },
+      request(32, {
+        op: 'execute',
+        tool: 'plugin.set_quick_control',
+        arguments: { trackId: 'track-1', index: 5, value: 0.5 },
+      }),
+    );
+    expect(lastResponse(api)).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('not mapped'),
+    });
+    api.driver._input.mOnSysex(
+      { id: 'device' },
+      request(33, {
+        op: 'execute',
+        tool: 'plugin.set_bypass',
+        arguments: { trackId: 'track-0', bypassed: true },
+      }),
+    );
+    expect(lastResponse(api)).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('no plugin'),
     });
     expect(api.log.some((entry) => entry.call === 'setProcessValue')).toBe(false);
   });

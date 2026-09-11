@@ -18,7 +18,18 @@ const require_ = createRequire(import.meta.url);
 /** What a small session looks like once Cubase has filled the bank. */
 export const DEFAULT_TRACKS = [
   { name: 'Kick', volume: 0.82, mute: false, solo: false },
-  { name: 'Sub bass', volume: 0.6, mute: false, solo: false },
+  {
+    name: 'Sub bass',
+    volume: 0.6,
+    mute: false,
+    solo: false,
+    // An instrument with the controls a producer would have mapped.
+    plugin: 'Retrologue',
+    quickControls: [
+      { index: 0, name: 'Cutoff', value: 0.62 },
+      { index: 1, name: 'Resonance', value: 0.3 },
+    ],
+  },
   { name: 'Analog keys', volume: 0.55, mute: true, solo: false },
 ];
 const PORT_NAME = process.env.ORCHESTRA_PEER_PORT ?? 'OrchestrAI Bridge';
@@ -69,6 +80,14 @@ export async function startCubasePeer({ tempo = 120, tracks = DEFAULT_TRACKS } =
     channel.mValue.mVolume.mOnProcessValueChange(device, mapping, track.volume);
     channel.mValue.mMute.mOnProcessValueChange(device, mapping, track.mute ? 1 : 0);
     channel.mValue.mSolo.mOnProcessValueChange(device, mapping, track.solo ? 1 : 0);
+    if (track.plugin) {
+      channel.mInstrumentPluginSlot.mOnTitleChange(device, mapping, track.plugin);
+      for (const control of track.quickControls ?? []) {
+        const quick = channel.mQuickControls.getByIndex(control.index);
+        quick.mOnTitleChange(device, mapping, control.name, control.name);
+        quick.mOnProcessValueChange(device, mapping, control.value);
+      }
+    }
   });
 
   const sent = [];

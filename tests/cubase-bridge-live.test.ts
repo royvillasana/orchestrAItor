@@ -161,6 +161,56 @@ describe.skipIf(!backendPresent)('live bridge over real MIDI', () => {
     expect(settled?.detail).toMatch(/no track/);
   }, 30000);
 
+  it('reads a plugin and its mapped quick controls over real MIDI', async () => {
+    const tracks = (await runtime.state()).project!.tracks;
+    expect(tracks[0].plugin ?? null).toBe(null);
+    expect(tracks[1].plugin).toMatchObject({ name: 'Retrologue', bypassed: false });
+    expect(tracks[1].plugin?.quickControls).toEqual([
+      { index: 0, name: 'Cutoff', value: 0.62 },
+      { index: 1, name: 'Resonance', value: 0.3 },
+    ]);
+  }, 30000);
+
+  it('applies an approved quick control change and refuses an unmapped one', async () => {
+    const raw = await runtime.call(
+      'plugin.set_quick_control',
+      { trackId: 'track-1', index: 0, value: 0.2 },
+      'live',
+    );
+    const activity = activitySchema.parse(
+      JSON.parse((raw.content as { type: string; text: string }[])[0].text),
+    );
+    expect(activity.status).toBe('awaiting-approval');
+    await runtime.control({
+      type: 'decision',
+      decision: { id: activity.id, sessionId: activity.sessionId, approve: true },
+    });
+    const call = [...peerLog()].reverse().find((entry) => entry.call === 'setProcessValue');
+    expect(call).toMatchObject({ name: 'trackQuick1_0', value: 0.2 });
+    const after = (await runtime.state()).project!.tracks[1];
+    expect(after.plugin?.quickControls[0].value).toBe(0.2);
+    // Resonance is untouched.
+    expect(after.plugin?.quickControls[1].value).toBe(0.3);
+
+    const unmapped = await runtime.call(
+      'plugin.set_quick_control',
+      { trackId: 'track-1', index: 6, value: 0.5 },
+      'live',
+    );
+    const refused = activitySchema.parse(
+      JSON.parse((unmapped.content as { type: string; text: string }[])[0].text),
+    );
+    await runtime.control({
+      type: 'decision',
+      decision: { id: refused.id, sessionId: refused.sessionId, approve: true },
+    });
+    const settled = historySchema
+      .parse(await db.execute({ type: 'history' }))
+      .activities.find((candidate) => candidate.id === refused.id);
+    expect(settled?.status).toBe('failed');
+    expect(settled?.detail).toMatch(/not mapped/);
+  }, 30000);
+
   it('drives transport through the bound surface value and survives disconnect', async () => {
     await runtime.call('transport.play', {}, 'live');
     const activity = activitySchema.parse(

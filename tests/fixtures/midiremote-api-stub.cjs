@@ -48,8 +48,19 @@ function makeApi() {
         const channels = [];
         const bankZone = {
           makeMixerBankChannel: () => {
+            const quickControls = Array.from({ length: 8 }, () => ({
+              mOnTitleChange: null,
+              mOnProcessValueChange: null,
+            }));
             const channel = {
               mValue: { mVolume: makeHostValue(), mMute: makeHostValue(), mSolo: makeHostValue() },
+              mQuickControls: { getByIndex: (index) => quickControls[index] },
+              mInstrumentPluginSlot: {
+                mOn: makeHostValue(),
+                mBypass: makeHostValue(),
+                mOnTitleChange: null,
+              },
+              _quickControls: quickControls,
               mOnTitleChange: null,
             };
             channels.push(channel);

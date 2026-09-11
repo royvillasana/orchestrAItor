@@ -3,9 +3,7 @@
 ## Purpose
 
 TBD - created by archiving change setup-orchestrai-desktop. Update Purpose after archive.
-
 ## Requirements
-
 ### Requirement: DAW-independent adapter contract
 
 The shared contract SHALL define connect, disconnect, getCapabilities, getProjectState, and execute using normalized project, track, capability, command, and result schemas without Cubase-specific command names.
@@ -56,3 +54,18 @@ The application SHALL present the mock adapter and the live Cubase bridge as dis
 
 - **WHEN** a session is connected
 - **THEN** the interface states whether the connected adapter is the mock or a live Cubase session
+
+### Requirement: Mock plugin state
+
+The mock SHALL carry a plugin on at least one fixture track with named quick controls, SHALL support bypass and quick control writes with normalized values, and SHALL refuse those writes on a track without a plugin.
+
+#### Scenario: Quick control round trip on the mock
+
+- **WHEN** a quick control is set on a mock track carrying a plugin
+- **THEN** the mock reports that control at the new value
+
+#### Scenario: Track without a plugin
+
+- **WHEN** a plugin write names a mock track with no plugin
+- **THEN** it is refused and nothing changes
+

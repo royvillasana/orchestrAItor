@@ -25,12 +25,16 @@ var OPERATIONS = [
   'track.set_volume',
   'track.set_mute',
   'track.set_solo',
+  'plugin.set_bypass',
+  'plugin.set_quick_control',
 ];
 //! A bank is a window onto the project, not the project. Sixteen covers most
 //! sessions a producer works with conversationally and keeps the SysEx payload
 //! small; a larger session is reported as truncated rather than as though the
 //! list were everything.
 var BANK_SIZE = 16;
+//! Cubase exposes eight quick controls per channel.
+var QUICK_CONTROLS = 8;
 
 function utf8Encode(text) {
   var bytes = [];
@@ -155,6 +159,9 @@ function createHandler(host) {
         if (request.tool === 'project.set_tempo') host.setTempo(request.arguments.tempo);
         if (request.tool === 'transport.play') host.setPlaying(true);
         if (request.tool === 'transport.stop') host.setPlaying(false);
+        if (request.tool.indexOf('plugin.') === 0) {
+          host.setPlugin(request.tool, request.arguments);
+        }
         if (request.tool.indexOf('track.') === 0) {
           var field =
             request.tool === 'track.set_volume'
@@ -220,6 +227,18 @@ if (api) {
     page.makeValueBinding(volume, channel.mValue.mVolume);
     page.makeValueBinding(mute, channel.mValue.mMute);
     page.makeValueBinding(solo, channel.mValue.mSolo);
+    //! Quick controls are what the producer already chose to expose on a
+    //! control surface. Reaching arbitrary plugin parameters would need a
+    //! parameter database this script cannot verify, and a wrong parameter
+    //! moved in someone's session is worse than one that was never reachable.
+    var quick = [];
+    for (var q = 0; q < QUICK_CONTROLS; q++) {
+      var qValue = deviceDriver.mSurface.makeCustomValueVariable('trackQuick' + index + '_' + q);
+      page.makeValueBinding(qValue, channel.mQuickControls.getByIndex(q));
+      quick.push({ index: q, name: '', value: 0, mapped: false, surface: qValue });
+    }
+    var bypass = deviceDriver.mSurface.makeCustomValueVariable('trackBypass' + index);
+    page.makeValueBinding(bypass, channel.mInstrumentPluginSlot.mBypass);
     var entry = {
       id: 'track-' + index,
       name: '',
@@ -228,7 +247,9 @@ if (api) {
       mute: false,
       solo: false,
       present: false,
-      surface: { volume: volume, mute: mute, solo: solo },
+      plugin: { name: '', bypassed: false, present: false },
+      quick: quick,
+      surface: { volume: volume, mute: mute, solo: solo, bypass: bypass },
     };
     channels.push(entry);
     //! Values come from the host's own callbacks. A script that trusted its own
@@ -236,6 +257,18 @@ if (api) {
     bindChannel(channel, entry);
   }
   function bindChannel(channel, entry) {
+    channel.mInstrumentPluginSlot.mOnTitleChange = function (device, mapping, title) {
+      entry.plugin.name = title || '';
+      entry.plugin.present = !!title;
+    };
+    channel.mInstrumentPluginSlot.mBypass.mOnProcessValueChange = function (
+      device,
+      mapping,
+      value,
+    ) {
+      entry.plugin.bypassed = value >= 0.5;
+    };
+    for (var q = 0; q < entry.quick.length; q++) bindQuickControl(channel, entry, q);
     channel.mOnTitleChange = function (activeDevice, activeMapping, title) {
       entry.name = title || '';
       entry.present = !!title;
@@ -273,6 +306,18 @@ if (api) {
     session.mapping = null;
   };
 
+  function bindQuickControl(channel, entry, index) {
+    var control = channel.mQuickControls.getByIndex(index);
+    control.mOnTitleChange = function (device, mapping, objectTitle, valueTitle) {
+      //! A control with no name is unmapped, not a nameless slot.
+      var name = valueTitle || objectTitle || '';
+      entry.quick[index].name = name;
+      entry.quick[index].mapped = !!name;
+    };
+    control.mOnProcessValueChange = function (device, mapping, value) {
+      entry.quick[index].value = value;
+    };
+  }
   function requireSession() {
     if (!session.device || !session.mapping)
       throw new Error('The OrchestrAI mapping page is not active in Cubase.');
@@ -286,6 +331,14 @@ if (api) {
       for (var index = 0; index < channels.length; index++) {
         var entry = channels[index];
         if (!entry.present) continue;
+        var controls = [];
+        for (var c = 0; c < entry.quick.length; c++)
+          if (entry.quick[c].mapped)
+            controls.push({
+              index: c,
+              name: entry.quick[c].name,
+              value: Math.max(0, Math.min(1, entry.quick[c].value)),
+            });
         tracks.push({
           id: entry.id,
           name: entry.name || 'Channel ' + (index + 1),
@@ -293,6 +346,9 @@ if (api) {
           mute: entry.mute,
           solo: entry.solo,
           volume: Math.max(0, Math.min(1, entry.volume)),
+          plugin: entry.plugin.present
+            ? { name: entry.plugin.name, bypassed: entry.plugin.bypassed, quickControls: controls }
+            : null,
         });
       }
       return {
@@ -307,6 +363,27 @@ if (api) {
         // Every channel reported means the project may hold more than the bank.
         tracksTruncated: tracks.length >= BANK_SIZE,
       };
+    },
+    setPlugin: function (tool, args) {
+      requireSession();
+      var entry = null;
+      for (var index = 0; index < channels.length; index++)
+        if (channels[index].id === args.trackId && channels[index].present) entry = channels[index];
+      if (!entry) throw new Error('This session has no track "' + args.trackId + '".');
+      if (!entry.plugin.present) throw new Error('"' + entry.name + '" has no plugin.');
+      if (tool === 'plugin.set_bypass') {
+        entry.surface.bypass.setProcessValue(session.device, args.bypassed ? 1 : 0);
+        entry.plugin.bypassed = !!args.bypassed;
+      } else {
+        var control = entry.quick[args.index];
+        if (!control || !control.mapped)
+          throw new Error(
+            'Quick control ' + args.index + ' is not mapped on "' + entry.name + '".',
+          );
+        control.surface.setProcessValue(session.device, args.value);
+        control.value = args.value;
+      }
+      session.revision++;
     },
     setTrack: function (trackId, field, value) {
       requireSession();
