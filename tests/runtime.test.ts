@@ -96,6 +96,11 @@ describe('real MCP/runtime process', () => {
     await runtime.control({ type: 'provider', provider: 'openai' });
     expect((await runtime.state()).provider).toBe('openai');
     expect((await runtime.state()).providerLive).toBe(true);
+    // Replacing a key keeps the session, and the next turn must carry the new
+    // key rather than the one the transport was built with.
+    await runtime.control({ type: 'credential', provider: 'openai', key: 'sk-test-key-5678' });
+    expect((await runtime.state()).provider).toBe('openai');
+    expect((await runtime.state()).providerLive).toBe(true);
     // Removing the key must not leave a session holding it.
     await runtime.control({ type: 'credential', provider: 'openai', key: null });
     expect((await runtime.state()).provider).toBe('demo');

@@ -45,7 +45,10 @@ export class DemoProvider implements AgentProvider {
         commands: [{ tool: 'project.get_state', arguments: {} }],
       };
     return {
-      text: 'Let’s explore the session. Try “Inspect the project”, “Set tempo to 124 BPM”, or “Play”. I am the local Demo agent; no live AI account or real Cubase session is connected.',
+      // Speaks only for itself: the Demo agent cannot see which adapter is
+      // connected, and it was telling producers on the live bridge that their
+      // real session was not connected while approved writes reached it.
+      text: 'Let’s explore the session. Try “Inspect the project”, “Set tempo to 124 BPM”, or “Play”. I am the local Demo agent: fixed local responses, not a model answer. The connection above shows which session you are in.',
       commands: [],
     };
   }

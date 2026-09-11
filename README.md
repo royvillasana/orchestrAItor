@@ -179,9 +179,11 @@ What happens to the key:
 - The plaintext exists in the main process only long enough to be encrypted or decrypted, and in the runtime child only in memory, for the session. It is never placed in any child process's environment.
 - **Remove** deletes the row and the runtime drops the key; if OpenAI was the active partner, the session falls back to the Demo agent rather than continuing with a key that is gone.
 
-The OpenAI session reaches the DAW the same way every other partner does — the tool registry, the permission engine, the adapter, Undo — over a bounded tool-call loop (six rounds), after which the turn ends with what it has rather than continuing indefinitely. A rejected key is reported as a key problem, and the key never appears in an error message or a log line.
+The OpenAI session reaches the DAW the same way every other partner does — the tool registry, the permission engine, the adapter, Undo — over a bounded tool-call loop (six rounds), after which the turn ends with what it has rather than continuing indefinitely. The whole turn has a three-minute deadline, so a stalled connection ends as a timeout instead of wedging the chat, and cancelling stops the loop before the next tool call rather than after the round it was in. A rejected key is reported as a key problem, and the key never appears in an error message or a log line.
 
-`pnpm test:smoke-credentials` runs this against the real credential store: it stores a key, asserts the renderer only ever sees the hint, asserts the plaintext is not readable in the database file, restarts the application, confirms OpenAI is selectable without re-entering it, and removes it again. It makes no network call, so it costs nothing and is safe to run with a throwaway key.
+Replacing a key rebuilds the live session so the next turn sends the key that was just stored, rather than the one the transport was built with. Removing one cancels any turn in flight and falls back to the Demo agent — a session must not keep sending a credential the producer just revoked. Where the platform reports no credential store, or a Linux session offers only the obfuscating `basic_text` backend, the card says so **before** a key is typed and the field is not offered at all.
+
+`pnpm test:smoke-credentials` runs this against the real credential store: it stores a key, asserts the renderer only ever sees the hint, asserts the plaintext is not readable in the database file, restarts the application, confirms OpenAI is selectable without re-entering it, replaces the key without dropping the session, and removes it and watches the session fall back. It makes no network call, so it costs nothing and is safe to run with a throwaway key.
 
 ## Sample libraries
 
@@ -234,7 +236,7 @@ It is the only path where the session changes without a prompt immediately befor
 
 - **A run, not a setting.** Agent mode is entered deliberately and a run is started explicitly with its budget. Nothing persists across restarts: a mode whose purpose is acting without asking is the one nobody should find already switched on.
 - **The budget is the bound.** A run declares how many changes it may make and how long it may take. Both are checked _before_ each write, and exhausting either ends the run with the reason. "Eight changes, two minutes" is a sentence with a worst case.
-- **A standing list, not a blanket.** Only tempo, transport, and track volume/mute/solo run without asking. Anything else — clip generation, anything new — still takes an approval, in Agent mode exactly as in Assist, and a capability classified destructive is never on the list.
+- **A standing list, not a blanket.** Only tempo, transport, and track volume/mute/solo run without asking — `AGENT_MODE_TOOLS` is that list, and the pre-run banner is rendered from it so the disclosure cannot drift from what actually runs. Plugin writes, quick controls included, are not on it. Anything else — clip generation, anything new — still takes an approval, in Agent mode exactly as in Assist, and a capability classified destructive is never on the list.
 - **Stop means now.** Stop is checked before each write, so it never costs one more operation.
 - **The run is the unit of undo.** A run captures the session before it starts and offers a single undo restoring it, under the same revision check as any other undo. Undoing writes one at a time would ask a producer to reason about ordering they never watched.
 - **A failure ends the run**, rather than continuing against a session whose state is no longer known while nobody is watching.

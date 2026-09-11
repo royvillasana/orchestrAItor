@@ -57,12 +57,38 @@ interface TurnEvents {
    * message is still built from `text`, which holds completed output only.
    */
   streamed: string;
+  /**
+   * How much of the block now arriving was already shown as deltas. Tracked
+   * rather than inferred from the tail of `streamed`, which cannot tell a
+   * repeated token ("very very") from one that was already displayed.
+   */
+  blockStreamed: string;
 }
-/** Appends unless this text has already been streamed. */
-export function streamText(events: TurnEvents, text: string, onDelta?: (text: string) => void) {
-  if (!text || events.streamed.endsWith(text)) return;
-  events.streamed +=
-    events.streamed && !/\s$/.test(events.streamed) && !/^\s/.test(text) ? text : text;
+/**
+ * Appends streamed output. Deltas extend the block being written; a completed
+ * block contributes only what the deltas did not already carry, and separate
+ * blocks keep the paragraph break the stored message has.
+ */
+export function streamText(
+  events: TurnEvents,
+  text: string,
+  onDelta?: (text: string) => void,
+  block = false,
+) {
+  if (!text) return;
+  if (block) {
+    const remainder = text.startsWith(events.blockStreamed)
+      ? text.slice(events.blockStreamed.length)
+      : text;
+    events.blockStreamed = '';
+    if (!remainder) return;
+    events.streamed += events.streamed ? `\n\n${remainder}` : remainder;
+  } else {
+    // The first token of a new block starts a new paragraph.
+    const separator = events.streamed && !events.blockStreamed ? '\n\n' : '';
+    events.streamed += separator + text;
+    events.blockStreamed += text;
+  }
   onDelta?.(events.streamed);
 }
 /** Parses one line of a CLI's event stream; unknown shapes are ignored. */
@@ -91,9 +117,8 @@ export function readClaudeEvent(
       if (item.type === 'text' && typeof item.text === 'string' && type === 'assistant') {
         events.text.push(item.text);
         // Already streamed as deltas where the CLI sends them; appended here
-        // where it does not. Compared rather than flagged, so a CLI that does
-        // both still reads correctly.
-        streamText(events, item.text, onDelta);
+        // where it does not.
+        streamText(events, item.text, onDelta, true);
       }
       if (item.type === 'tool_use' && typeof item.name === 'string')
         events.toolCalls.push({ name: item.name, input: item.input });
@@ -124,7 +149,8 @@ export function readCodexEvent(line: string, events: TurnEvents, onDelta?: (text
         : null;
   if (type === 'agent_message' && body) {
     events.text.push(body);
-    streamText(events, body, onDelta);
+    // Codex reports whole messages, never tokens.
+    streamText(events, body, onDelta, true);
   }
   if (type === 'mcp_tool_call_begin' || type === 'mcp_tool_call') {
     const invocation = (payload.invocation ?? payload) as {
@@ -252,6 +278,7 @@ export class LiveAgentProvider implements AgentProvider {
       model: null,
       error: null,
       streamed: '',
+      blockStreamed: '',
     };
     const read = this.id === 'codex' ? readCodexEvent : readClaudeEvent;
     const child = this.spawnProcess(this.options.executable, this.args(prompt), {

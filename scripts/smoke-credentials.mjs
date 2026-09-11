@@ -44,7 +44,7 @@ try {
   const openai = page.getByRole('radio', { name: /OpenAI/ });
   assert.equal(await openai.isEnabled(), false, 'OpenAI must not be selectable without a key.');
   const before = await page.evaluate(async () => (await window.orchestra.snapshot({})).credentials);
-  assert.deepEqual(before, [{ provider: 'openai', stored: false, hint: null }]);
+  assert.deepEqual(before, [{ provider: 'openai', stored: false, hint: null, storage: 'os' }]);
 
   await page.getByLabel('OpenAI API key').fill(KEY);
   await page.getByRole('button', { name: 'Save key' }).click();
@@ -54,7 +54,7 @@ try {
     (value) => value[0]?.stored === true,
     { timeout: 15000, label: 'the key to be stored' },
   );
-  assert.deepEqual(stored, [{ provider: 'openai', stored: true, hint: '9876' }]);
+  assert.deepEqual(stored, [{ provider: 'openai', stored: true, hint: '9876', storage: 'os' }]);
   // The field is cleared and never repopulated: the key is not readable back.
   assert.equal(await page.getByLabel('OpenAI API key').inputValue(), '');
   const snapshot = await page.evaluate(async () =>
@@ -78,7 +78,7 @@ try {
     (value) => value[0]?.stored === true,
     { timeout: 15000, label: 'the stored key to load at startup' },
   );
-  assert.deepEqual(reloaded, [{ provider: 'openai', stored: true, hint: '9876' }]);
+  assert.deepEqual(reloaded, [{ provider: 'openai', stored: true, hint: '9876', storage: 'os' }]);
   // The runtime holds it too, so OpenAI is selectable without re-entering it.
   const selected = await restarted.evaluate(async () =>
     window.orchestra
@@ -88,6 +88,21 @@ try {
   );
   assert.equal(selected, 'ok', `OpenAI must be selectable after a restart: ${selected}`);
 
+  // A replacement must be what the next turn actually sends: the runtime
+  // rebuilds the session rather than keeping the transport it already had.
+  await restarted.getByRole('radio', { name: /OpenAI/ }).click();
+  await restarted.getByLabel('OpenAI API key').fill('sk-not-a-real-key-000000000000001111');
+  await restarted.getByRole('button', { name: 'Save key' }).click();
+  const replaced = await until(
+    restarted,
+    async () => (await window.orchestra.snapshot({})).credentials,
+    (value) => value[0]?.hint === '1111',
+    { timeout: 15000, label: 'the replacement key to be stored' },
+  );
+  assert.equal(replaced[0].stored, true);
+  const still = await restarted.evaluate(async () => (await window.orchestra.snapshot({})).runtime);
+  assert.equal(still.provider, 'openai', 'Replacing a key must not drop the session.');
+
   await restarted.getByRole('button', { name: 'Remove' }).click();
   const cleared = await until(
     restarted,
@@ -95,13 +110,22 @@ try {
     (value) => value[0]?.stored === false,
     { timeout: 15000, label: 'the key to be forgotten' },
   );
-  assert.deepEqual(cleared, [{ provider: 'openai', stored: false, hint: null }]);
+  assert.deepEqual(cleared, [{ provider: 'openai', stored: false, hint: null, storage: 'os' }]);
+  // A session left holding a key that no longer exists falls back rather than
+  // continuing to send it.
+  const fallback = await until(
+    restarted,
+    async () => (await window.orchestra.snapshot({})).runtime,
+    (value) => value?.provider === 'demo',
+    { timeout: 15000, label: 'the session to fall back to the Demo agent' },
+  );
+  assert.equal(fallback.providerLive, false);
   const after = await readFile(path.join(dataDirectory, 'orchestrai.sqlite'));
   assert.equal(after.includes(KEY), false);
   await restarted.screenshot({ path: 'artifacts/credentials.png', fullPage: true });
   assert.deepEqual(errors, []);
   console.log(
-    'PASS: a key is stored encrypted, described to the renderer only as a hint, survives a restart, and is removable.',
+    'PASS: a key is stored encrypted, described to the renderer only as a hint, survives a restart, is replaceable without dropping the session, and on removal the session falls back to the Demo agent.',
   );
 } finally {
   await app?.close();

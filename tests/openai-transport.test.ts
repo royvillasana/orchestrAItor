@@ -185,4 +185,86 @@ describe('OpenAI transport', () => {
     ).rejects.toThrow(/No API key/);
     expect(vi.isMockFunction(globalThis.fetch)).toBe(false);
   });
+
+  it('sends the key that is stored now, not the one it was built with', async () => {
+    const sent: string[] = [];
+    let key: string | undefined = 'sk-first';
+    const fetchImpl = (async (_url: string, init: RequestInit) => {
+      sent.push(String(new Headers(init.headers).get('Authorization')));
+      return reply({ role: 'assistant', content: 'ok' });
+    }) as unknown as typeof fetch;
+    const transport = new HttpOpenAITransport({
+      apiKey: () => key,
+      runTool: async () => '',
+      fetchImpl,
+    });
+    await transport.send(conversation, tools, new AbortController().signal);
+    key = 'sk-second';
+    await transport.send(conversation, tools, new AbortController().signal);
+    expect(sent).toEqual(['Bearer sk-first', 'Bearer sk-second']);
+    // A key removed while the transport still exists stops the next request.
+    key = undefined;
+    await expect(transport.send(conversation, tools, new AbortController().signal)).rejects.toThrow(
+      /No API key/,
+    );
+  });
+
+  it('stops calling tools once the turn is cancelled', async () => {
+    const controller = new AbortController();
+    const ran: string[] = [];
+    const fetchImpl = (async () =>
+      reply({
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          { id: 'a', type: 'function', function: { name: 'track_set_mute', arguments: '{}' } },
+          { id: 'b', type: 'function', function: { name: 'track_set_volume', arguments: '{}' } },
+          { id: 'c', type: 'function', function: { name: 'plugin_set_bypass', arguments: '{}' } },
+        ],
+      })) as unknown as typeof fetch;
+    const transport = new HttpOpenAITransport({
+      apiKey: 'k',
+      fetchImpl,
+      runTool: async (name) => {
+        ran.push(name);
+        // The producer cancels while the first write is executing.
+        controller.abort();
+        return 'ok';
+      },
+    });
+    await expect(transport.send(conversation, tools, controller.signal)).rejects.toThrow();
+    // The calls a model asked for in one round are not a transaction to finish.
+    expect(ran).toEqual(['track.set_mute']);
+  });
+
+  it('gives the turn a deadline rather than hanging on a stalled connection', async () => {
+    const fetchImpl = (async (_url: string, init: RequestInit) =>
+      new Promise((_resolve, reject) => {
+        init.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+      })) as unknown as typeof fetch;
+    const transport = new HttpOpenAITransport({
+      apiKey: 'k',
+      runTool: async () => '',
+      fetchImpl,
+      timeoutMs: 50,
+    });
+    await expect(transport.send(conversation, tools, new AbortController().signal)).rejects.toThrow(
+      /did not respond within/,
+    );
+  });
+
+  it('reports a cancelled turn as cancelled rather than as a failure', async () => {
+    const controller = new AbortController();
+    const fetchImpl = (async (_url: string, init: RequestInit) => {
+      controller.abort();
+      init.signal?.throwIfAborted();
+      return reply({ role: 'assistant', content: 'never' });
+    }) as unknown as typeof fetch;
+    const provider = new OpenAIProvider(
+      new HttpOpenAITransport({ apiKey: 'k', runTool: async () => '', fetchImpl }),
+    );
+    const send = provider.sendMessage(conversation, tools);
+    await provider.cancel();
+    await expect(send).resolves.toMatchObject({ text: 'OpenAI turn cancelled.', commands: [] });
+  });
 });

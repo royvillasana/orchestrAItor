@@ -19,6 +19,12 @@ export const credentialSchema = z
     provider: keyedProviderSchema,
     stored: z.boolean(),
     hint: z.string().max(8).nullable(),
+    /**
+     * What this system can actually promise: an OS credential store, a Linux
+     * session whose only backend obfuscates rather than encrypts, or nothing.
+     * Said before a key is typed rather than after it is refused.
+     */
+    storage: z.enum(['os', 'weak', 'unavailable']),
   })
   .strict();
 export type Credential = z.infer<typeof credentialSchema>;
@@ -145,8 +151,16 @@ export const AGENT_MODE_TOOLS = [
   'track.set_volume',
   'track.set_mute',
   'track.set_solo',
-  'plugin.set_quick_control',
 ] as const;
+/** Labels for the standing list, so what is disclosed cannot drift from it. */
+export const AGENT_MODE_TOOL_LABELS: Record<(typeof AGENT_MODE_TOOLS)[number], string> = {
+  'project.set_tempo': 'tempo',
+  'transport.play': 'transport',
+  'transport.stop': 'transport',
+  'track.set_volume': 'track levels',
+  'track.set_mute': 'track mute',
+  'track.set_solo': 'track solo',
+};
 export const capabilitySchema = z
   .object({
     id: idSchema,

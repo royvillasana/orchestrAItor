@@ -225,11 +225,12 @@ async function useProvider(id: ProviderId) {
   await live?.dispose();
   live = null;
   if (id === 'openai') {
-    const key = apiKeys.get('openai');
-    if (!key) throw new Error('Add an OpenAI API key in the connection screen first.');
+    if (!apiKeys.get('openai'))
+      throw new Error('Add an OpenAI API key in the connection screen first.');
     const provider = new OpenAIProvider(
       new HttpOpenAITransport({
-        apiKey: key,
+        // Resolved per request: a key removed mid-turn stops being sent.
+        apiKey: () => apiKeys.get('openai'),
         onDelta: (text) => emit({ conversationId: agentConversationId, text, done: false }),
         // A keyed provider reaches the session the same way every other
         // provider does: through the registry and the permission engine.
@@ -314,8 +315,14 @@ async function control(command: Control): Promise<unknown> {
     case 'credential': {
       if (command.key) apiKeys.set(command.provider, command.key);
       else apiKeys.delete(command.provider);
-      // Switching away from a provider whose key just disappeared.
-      if (!command.key && activeId === command.provider) await useProvider('demo');
+      if (activeId === command.provider) {
+        // A turn in flight holds the session and the old key, so it is stopped
+        // rather than left to finish against a credential that just changed.
+        await active.cancel();
+        // Rebuilt on a replacement so the next turn sends the key that was just
+        // stored; a removal falls back to the partner that needs none.
+        await useProvider(command.key ? command.provider : 'demo');
+      }
       return orchestration.state();
     }
     case 'verify': {
@@ -397,6 +404,9 @@ async function control(command: Control): Promise<unknown> {
                 withoutApproval: [...AGENT_MODE_TOOLS],
               }
             : undefined;
+        // Captured before the turn: a partner swapped underneath it must not
+        // take the credit for an answer it did not produce.
+        const turnProvider = providerNames[activeId];
         const response = await active.sendMessage(
           {
             ...conversation,
@@ -420,7 +430,7 @@ async function control(command: Control): Promise<unknown> {
             id: randomUUID(),
             conversationId: conversation.id,
             role: 'assistant',
-            provider: providerNames[activeId],
+            provider: turnProvider,
             content: text,
             timestamp: new Date().toISOString(),
           },

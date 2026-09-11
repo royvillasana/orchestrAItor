@@ -94,8 +94,21 @@ function decryptSecret(ciphertext: string): string | null {
     return null;
   }
 }
+/**
+ * What this machine can promise about a stored key. A Linux session with only
+ * the `basic_text` backend obfuscates rather than encrypts, which is not what
+ * "encrypted by your system credential store" means, so it is named as its own
+ * state rather than folded into success.
+ */
+function storageQuality(): 'os' | 'weak' | 'unavailable' {
+  if (!safeStorage.isEncryptionAvailable()) return 'unavailable';
+  if (process.platform === 'linux' && safeStorage.getSelectedStorageBackend?.() === 'basic_text')
+    return 'weak';
+  return 'os';
+}
 async function refreshCredentials() {
   const stored = await readSecrets();
+  const storage = storageQuality();
   credentials = (['openai'] as const).map((provider) => {
     const ciphertext = stored[provider];
     const key = ciphertext ? decryptSecret(ciphertext) : null;
@@ -104,6 +117,7 @@ async function refreshCredentials() {
       stored: !!key,
       // Enough to tell one key from another, not enough to use one.
       hint: key ? key.slice(-4) : null,
+      storage,
     };
   });
   return stored;
@@ -396,11 +410,14 @@ async function invoke(method: IpcMethod, input: unknown): Promise<Snapshot> {
     }
     if (method === 'setApiKey') {
       const input = ipcInputs.setApiKey.parse(value);
-      if (!safeStorage.isEncryptionAvailable())
-        // Refused rather than written in the clear, which would be invisible at
+      const quality = storageQuality();
+      if (quality !== 'os')
+        // Refused rather than written weakly, which would be invisible at
         // exactly the moment it mattered.
         throw new Error(
-          'This system reports no credential store, so a key cannot be stored safely. Use a signed-in CLI instead.',
+          quality === 'weak'
+            ? 'This session has no keyring, so a key would be obfuscated rather than encrypted. Use a signed-in CLI instead.'
+            : 'This system reports no credential store, so a key cannot be stored safely. Use a signed-in CLI instead.',
         );
       await db.execute({
         type: 'setSecret',

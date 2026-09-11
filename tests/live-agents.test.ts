@@ -116,6 +116,7 @@ describe('live provider', () => {
     model: null as string | null,
     error: null as string | null,
     streamed: '',
+    blockStreamed: '',
   });
   it('reads assistant text, tool calls, and model from a Claude Code stream', () => {
     const state = events();
@@ -263,7 +264,10 @@ describe('live provider', () => {
       (text) => deltas.push(text),
     );
     // The provider assembles, so each emission is the text so far.
-    expect(deltas).toEqual(['Looking at the session…', 'Looking at the session…It is at 120 BPM.']);
+    expect(deltas).toEqual([
+      'Looking at the session…',
+      'Looking at the session…\n\nIt is at 120 BPM.',
+    ]);
     const codexState = events();
     const codexDeltas: string[] = [];
     readCodexEvent(
@@ -287,10 +291,41 @@ describe('live provider', () => {
       text,
     ) => deltas.push(text);
     const response = await provider.sendMessage(conversation, tools);
-    // Text so far on each emission, and the stored message from completed
-    // blocks rather than from the display buffer.
-    expect(deltas).toEqual(['first', 'firstsecond']);
+    // Text so far on each emission, and what is shown mid-turn is broken into
+    // the same paragraphs as the message that is finally stored — the display
+    // must not reflow when the turn ends.
+    expect(deltas).toEqual(['first', 'first\n\nsecond']);
     expect(response.text).toBe('first\n\nsecond');
+    expect(deltas.at(-1)).toBe(response.text);
+  });
+  it('shows a repeated token instead of swallowing it as already streamed', () => {
+    const state = events();
+    const deltas: string[] = [];
+    const delta = (text: string) =>
+      readClaudeEvent(
+        JSON.stringify({
+          type: 'stream_event',
+          event: { type: 'content_block_delta', delta: { type: 'text_delta', text } },
+        }),
+        state,
+        (value) => deltas.push(value),
+      );
+    delta('very');
+    delta(' very');
+    delta(' quiet');
+    // A suffix match cannot tell a repeat from a redisplay, so it is not used.
+    expect(deltas.at(-1)).toBe('very very quiet');
+    // The completed block adds nothing that the deltas already carried.
+    readClaudeEvent(
+      JSON.stringify({
+        type: 'assistant',
+        message: { content: [{ type: 'text', text: 'very very quiet' }] },
+      }),
+      state,
+      (value) => deltas.push(value),
+    );
+    expect(deltas.at(-1)).toBe('very very quiet');
+    expect(state.text).toEqual(['very very quiet']);
   });
   it('asks the latest question, not the one the conversation was named after', () => {
     const message = (id: string, role: 'user' | 'assistant', content: string) => ({

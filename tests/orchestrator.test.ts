@@ -240,8 +240,19 @@ describe('permission-controlled orchestration', () => {
     it('undoes a whole run, and refuses when the session moved on', async () => {
       const { core } = await start();
       const before = (await core.state()).project!;
+      const quick = before.tracks.find((track) => track.plugin)?.plugin?.quickControls[0];
       await core.request('project.set_tempo', { tempo: 140 }, 'c');
       await core.request('track.set_mute', { trackId: 'kick', mute: true }, 'c');
+      if (quick)
+        await core.request(
+          'plugin.set_quick_control',
+          {
+            trackId: before.tracks.find((track) => track.plugin)!.id,
+            index: quick.index,
+            value: quick.value === 0.9 ? 0.2 : 0.9,
+          },
+          'c',
+        );
       const runId = (await core.state()).run!.id;
       await core.stopRun();
 
@@ -250,6 +261,12 @@ describe('permission-controlled orchestration', () => {
       const restored = (await core.state()).project!;
       expect(restored.tempo).toBe(before.tempo);
       expect(restored.tracks.find((track) => track.id === 'kick')?.mute).toBe(false);
+      // A run may move quick controls unattended, so undoing it must put them
+      // back too: otherwise Undo restores only the part that asked permission.
+      if (quick)
+        expect(restored.tracks.find((track) => track.plugin)?.plugin?.quickControls[0].value).toBe(
+          quick.value,
+        );
       // Already undone, and the session has moved on since.
       await expect(core.undoRun(runId, 'c')).rejects.toThrow(/already been undone/);
     });

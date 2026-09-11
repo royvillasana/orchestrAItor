@@ -378,6 +378,21 @@ export class Orchestrator {
           { tool: 'track.set_volume', arguments: { trackId: track.id, volume: track.volume } },
           { tool: 'track.set_mute', arguments: { trackId: track.id, mute: track.mute } },
           { tool: 'track.set_solo', arguments: { trackId: track.id, solo: track.solo } },
+          // A run may move quick controls without asking, so undoing the run
+          // has to put them back; the capability filter below drops these
+          // where the adapter reports no plugin control.
+          ...(track.plugin
+            ? ([
+                {
+                  tool: 'plugin.set_bypass',
+                  arguments: { trackId: track.id, bypassed: track.plugin.bypassed },
+                },
+                ...track.plugin.quickControls.map((control) => ({
+                  tool: 'plugin.set_quick_control',
+                  arguments: { trackId: track.id, index: control.index, value: control.value },
+                })),
+              ] as DawCommand[])
+            : []),
         ]),
       ];
       const call: Activity = {

@@ -443,22 +443,36 @@ describe('SQLite persistence', () => {
   });
 
   it('describes a credential to the renderer without carrying the key', () => {
-    expect(credentialSchema.parse({ provider: 'openai', stored: true, hint: '1234' })).toEqual({
+    expect(
+      credentialSchema.parse({ provider: 'openai', stored: true, hint: '1234', storage: 'os' }),
+    ).toEqual({
       provider: 'openai',
       stored: true,
       hint: '1234',
+      storage: 'os',
     });
     // A hint long enough to be a usable key is not a hint.
     expect(() =>
-      credentialSchema.parse({ provider: 'openai', stored: true, hint: 'sk-secret-key-1234' }),
+      credentialSchema.parse({
+        provider: 'openai',
+        stored: true,
+        hint: 'sk-secret-key-1234',
+        storage: 'os',
+      }),
     ).toThrow();
     // No field exists to smuggle one through.
     expect(() =>
-      credentialSchema.parse({ provider: 'openai', stored: true, hint: '1234', key: 'sk-x' }),
+      credentialSchema.parse({
+        provider: 'openai',
+        stored: true,
+        hint: '1234',
+        storage: 'os',
+        key: 'sk-x',
+      }),
     ).toThrow();
     // Only providers that take a key can have one.
     expect(() =>
-      credentialSchema.parse({ provider: 'claude', stored: true, hint: null }),
+      credentialSchema.parse({ provider: 'claude', stored: true, hint: null, storage: 'os' }),
     ).toThrow();
   });
 });

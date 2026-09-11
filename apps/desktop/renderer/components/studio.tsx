@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { BorderBeam } from 'border-beam';
 import PixelArc from './originkit/ui/pixel-arc';
 import { RichText } from './rich-text';
+import { standingList, visibleStream } from './session-view';
 import { ThinkingBubble, StreamingMessage, ToolChip, TurnError } from './chat-states';
 import type {
   Snapshot,
@@ -235,6 +236,8 @@ export function Studio({ setup = false }: { setup?: boolean }) {
   // producer cannot use it is more useful than a button that always fails.
   const agentById = (id: string) => data?.agents.find((agent) => agent.id === id);
   const openaiCredential = data?.credentials?.find((entry) => entry.provider === 'openai');
+  // A promise this machine cannot keep should not be made in the first place.
+  const keyStorable = (openaiCredential?.storage ?? 'os') === 'os';
   const partnerOptions = [
     {
       id: 'demo' as const,
@@ -249,13 +252,21 @@ export function Studio({ setup = false }: { setup?: boolean }) {
       title: 'OpenAI',
       subtitle: openaiCredential?.stored
         ? `API key stored · ends ${openaiCredential.hint}`
-        : 'Live model session · Needs an API key',
-      detail:
-        'Sends this conversation and project state to OpenAI. The key is encrypted by your system credential store and never leaves this machine in the clear.',
+        : keyStorable
+          ? 'Live model session · Needs an API key'
+          : 'Live model session · No credential store on this system',
+      detail: keyStorable
+        ? 'Sends this conversation and project state to OpenAI. The key is encrypted by your system credential store and never leaves this machine in the clear.'
+        : // What this machine can actually promise, said before a key is typed.
+          openaiCredential?.storage === 'weak'
+          ? 'This session has no keyring, so a key would be obfuscated rather than encrypted. Use a signed-in CLI instead.'
+          : 'This system reports no credential store, so a key cannot be stored safely here. Use a signed-in CLI instead.',
       agent: undefined,
-      unavailable: openaiCredential?.stored
-        ? null
-        : ('Add an API key below to use OpenAI.' as string | null),
+      unavailable: !keyStorable
+        ? ('A key cannot be stored safely on this system.' as string | null)
+        : openaiCredential?.stored
+          ? null
+          : ('Add an API key below to use OpenAI.' as string | null),
     },
     ...(
       [
@@ -315,7 +326,9 @@ export function Studio({ setup = false }: { setup?: boolean }) {
   const currentRun = runtime?.run ?? null;
   const activeRun = currentRun && !currentRun.endedAt ? currentRun : null;
   const finishedRun = currentRun?.endedAt ? currentRun : null;
-  const streaming = data?.streaming ?? null;
+  // A turn's partial text belongs to the conversation that asked for it, not
+  // to whichever one happens to be open when it arrives.
+  const streaming = visibleStream(data?.streaming ?? null, conversationId);
   // A turn is live while the request is in flight or text is still arriving.
   const turnRunning = busy || !!streaming;
   const lastActivity = calls.at(-1);
@@ -573,7 +586,7 @@ export function Studio({ setup = false }: { setup?: boolean }) {
                           )}
                         </div>
                       )}
-                      {option.id === 'openai' && (
+                      {option.id === 'openai' && keyStorable && (
                         <form
                           className="mt-2 flex items-center gap-2"
                           onSubmit={(event) => {
@@ -622,8 +635,10 @@ export function Studio({ setup = false }: { setup?: boolean }) {
               </div>
               {partner !== 'demo' && (
                 <p className="mt-2 text-[11px] leading-4 text-warm/80 tall:mt-3 tall:leading-5">
-                  A live partner sends this conversation and project state to its model provider. It
-                  signs in with its own CLI; OrchestrAI stores no credentials.
+                  A live partner sends this conversation and project state to its model provider.{' '}
+                  {partner === 'openai'
+                    ? 'Your API key is encrypted by this system’s credential store and stays on this machine.'
+                    : 'It signs in with its own CLI; OrchestrAI stores no credentials.'}
                 </p>
               )}
             </section>
@@ -1083,7 +1098,9 @@ export function Studio({ setup = false }: { setup?: boolean }) {
               {!activeRun ? (
                 <div className="flex flex-wrap items-center gap-3 text-xs">
                   <span className="text-warm">
-                    Agent mode changes tempo, transport, and track levels{' '}
+                    {/* Read from the permission list itself, so what is
+                        disclosed cannot drift from what actually runs. */}
+                    Agent mode changes {standingList()}{' '}
                     <strong className="font-semibold">without asking</strong>, within the limits you
                     set here.
                   </span>
