@@ -183,6 +183,9 @@ importers:
       '@orchestrai/music-engine':
         specifier: workspace:*
         version: link:../music-engine
+      '@orchestrai/openai':
+        specifier: workspace:*
+        version: link:../agents/openai
       '@orchestrai/orchestrator':
         specifier: workspace:*
         version: link:../orchestrator

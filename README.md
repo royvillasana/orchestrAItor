@@ -167,6 +167,22 @@ Both providers are verified against the same workflow: `ORCHESTRA_AGENT=codex pn
 
 Two Codex specifics, both of them its own behaviour rather than ours. Its event stream has shipped two shapes — older builds wrap the payload in `msg` with a `message` field, current builds report `item.completed` carrying an `item` with `text` — and both are parsed, since the installed CLI belongs to the producer. And `codex exec` asks its own approval before calling a tool, which cannot be answered in a non-interactive turn; without `--approve-for-me` every tool call fails as "approval required". Its sandbox is scoped to the working directory, which is the empty temporary one created for that turn, and OrchestrAI's permission engine remains what guards the DAW.
 
+## API keys (OpenAI)
+
+Claude Code and Codex bring their own sign-in. **OpenAI** is the one partner that needs a key, and it is entered in the connection screen on the OpenAI card — the card itself, because the partner cannot be selected until a key exists.
+
+What happens to the key:
+
+- It is encrypted with Electron `safeStorage`, which is the OS credential store (Keychain on macOS, the login keyring on Linux, DPAPI on Windows), and only the ciphertext is written to the local SQLite database.
+- If the system reports no credential store, the key is **refused** rather than written in the clear. The message says to use a signed-in CLI instead.
+- The renderer never receives it. The snapshot carries `{ provider, stored, hint }`, where the hint is the last four characters — enough to tell one key from another, not enough to use one. The entry field is cleared on submit and is never repopulated.
+- The plaintext exists in the main process only long enough to be encrypted or decrypted, and in the runtime child only in memory, for the session. It is never placed in any child process's environment.
+- **Remove** deletes the row and the runtime drops the key; if OpenAI was the active partner, the session falls back to the Demo agent rather than continuing with a key that is gone.
+
+The OpenAI session reaches the DAW the same way every other partner does — the tool registry, the permission engine, the adapter, Undo — over a bounded tool-call loop (six rounds), after which the turn ends with what it has rather than continuing indefinitely. A rejected key is reported as a key problem, and the key never appears in an error message or a log line.
+
+`pnpm test:smoke-credentials` runs this against the real credential store: it stores a key, asserts the renderer only ever sees the hint, asserts the plaintext is not readable in the database file, restarts the application, confirms OpenAI is selectable without re-entering it, and removes it again. It makes no network call, so it costs nothing and is safe to run with a throwaway key.
+
 ## Sample libraries
 
 Add a folder in the connection screen and OrchestrAI indexes it locally. Nothing is copied, moved, or uploaded: the index records paths, sizes, modification times, tags derived from folder and file names, and the format facts readable from a header.
@@ -237,7 +253,7 @@ Data lives in Electron's OS application-data directory under `OrchestrAI`:
 - `artifacts/`: generated MIDI clips, one file per clip.
 - `events.jsonl`: structured local diagnostics with secret patterns redacted.
 
-SQLite runs through `sql.js` in a worker, avoiding native Electron ABI rebuilds. Each mutation commits and writes an atomic checkpoint before acknowledging durability. This is appropriate for the skeleton's metadata; large sample catalogs will need a storage performance review before Milestone 3. One application instance owns the database. The database is local but not encrypted, so conversations should not contain API credentials. No API-key entry/storage is implemented yet; future credentials must use the OS credential store.
+SQLite runs through `sql.js` in a worker, avoiding native Electron ABI rebuilds. Each mutation commits and writes an atomic checkpoint before acknowledging durability. This is appropriate for the skeleton's metadata; large sample catalogs will need a storage performance review before Milestone 3. One application instance owns the database. The database is local but not encrypted, so conversations should not contain API credentials. API keys are the exception and never live in it as plaintext: they are encrypted by the OS credential store and only the ciphertext is written, in a `secret.<provider>` settings row (see [API keys](#api-keys-openai)).
 
 A stored row the current schema cannot read is left out of history and reported, rather than making the whole database unavailable: one unreadable row should not cost a producer their conversations. Migration 004 handles history written before track volume changed meaning — it drops those snapshots rather than converting a decibel figure into a fader position, which would be the same guess this project refused to make for live values.
 
@@ -258,6 +274,7 @@ pnpm test:smoke-bridge
 pnpm test:smoke-agent
 pnpm test:smoke-agent-mode
 pnpm test:smoke-samples <folder>
+pnpm test:smoke-credentials
 pnpm audit --prod
 ```
 
@@ -269,4 +286,6 @@ For development-mode smoke verification, start `pnpm --filter @orchestrai/deskto
 
 ## Next milestones
 
-API credential storage remains. Every completed change is archived under `openspec/changes/archive/`, and `openspec/specs/` describes what the application does today.
+The milestones in the proposal are implemented. What is **not** verified is Windows: every smoke harness here has been run on macOS only, the crash-injection portion uses POSIX process inspection, and `safeStorage` on Windows (DPAPI) has not been exercised on a Windows machine. Treat Windows as unverified rather than supported.
+
+Every completed change is archived under `openspec/changes/archive/`, and `openspec/specs/` describes what the application does today.

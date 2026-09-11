@@ -3,7 +3,9 @@
 ## Purpose
 
 TBD - created by archiving change add-cubase-midi-bridge. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: MIDI transport boundary
 
 The bridge SHALL depend on a narrow MIDI transport interface providing port listing, open, close, send, and message subscription. An in-process loopback transport SHALL be provided for verification without hardware. The platform transport SHALL load its backend lazily and SHALL NOT be a required install dependency.
@@ -153,4 +155,3 @@ The bridge SHALL apply plugin bypass and quick control changes through surface v
 
 - **WHEN** a write names a quick control the session has not mapped
 - **THEN** it is refused before anything is sent to Cubase
-

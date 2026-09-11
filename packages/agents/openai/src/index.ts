@@ -13,6 +13,7 @@ export interface OpenAITransport {
     signal: AbortSignal,
   ): Promise<AgentResponse>;
 }
+export * from './transport';
 export class OpenAIProvider implements AgentProvider {
   id = 'openai';
   name = 'OpenAI';

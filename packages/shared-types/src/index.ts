@@ -6,7 +6,22 @@ export type Mode = z.infer<typeof modeSchema>;
 export const tempoSchema = z.number().finite().min(20).max(300);
 export const adapterIdSchema = z.enum(['mock', 'bridge']);
 export type AdapterId = z.infer<typeof adapterIdSchema>;
-export const providerIdSchema = z.enum(['demo', 'claude', 'codex']);
+export const providerIdSchema = z.enum(['demo', 'claude', 'codex', 'openai']);
+/** Providers authenticated by a stored key rather than an installed CLI. */
+export const keyedProviderSchema = z.enum(['openai']);
+export type KeyedProvider = z.infer<typeof keyedProviderSchema>;
+/**
+ * What the interface is allowed to know about a stored key: that it exists, and
+ * enough to tell one key from another. Never the key.
+ */
+export const credentialSchema = z
+  .object({
+    provider: keyedProviderSchema,
+    stored: z.boolean(),
+    hint: z.string().max(8).nullable(),
+  })
+  .strict();
+export type Credential = z.infer<typeof credentialSchema>;
 export type ProviderId = z.infer<typeof providerIdSchema>;
 export const midiPortSchema = z
   .object({ id: idSchema, name: z.string().max(200), direction: z.enum(['input', 'output']) })
@@ -401,6 +416,7 @@ export const snapshotSchema = z
     streaming: streamSchema.nullable(),
     samples: z.array(indexedSampleSchema).max(50),
     artifacts: z.array(artifactSchema).max(200),
+    credentials: z.array(credentialSchema).max(4),
     agents: z.array(agentSchema),
     history: historySchema,
     logs: z.array(logSchema),
@@ -428,6 +444,15 @@ export const controlSchema = z.discriminatedUnion('type', [
     .strict(),
   z.object({ type: z.literal('midi') }).strict(),
   z.object({ type: z.literal('verify'), agent: providerIdSchema }).strict(),
+  // The key travels over the trusted control channel when a keyed session
+  // connects, and is held in memory for that session only.
+  z
+    .object({
+      type: z.literal('credential'),
+      provider: keyedProviderSchema,
+      key: z.string().max(400).nullable(),
+    })
+    .strict(),
   // Switching the creative partner mid-session, without touching the DAW.
   z.object({ type: z.literal('provider'), provider: providerIdSchema }).strict(),
   z.object({ type: z.literal('disconnect') }).strict(),
@@ -480,6 +505,15 @@ export const storeCommandSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('sampleByPath'), path: z.string().max(1000) }).strict(),
   z.object({ type: z.literal('samplesForRoot'), root: z.string().max(1000) }).strict(),
   z.object({ type: z.literal('artifacts') }).strict(),
+  z.object({ type: z.literal('secrets') }).strict(),
+  z
+    .object({
+      type: z.literal('setSecret'),
+      key: z.string().max(60),
+      // Ciphertext, or null to remove. Plaintext never reaches the store.
+      value: z.string().max(4000).nullable(),
+    })
+    .strict(),
   z
     .object({
       type: z.literal('artifact'),
@@ -515,6 +549,10 @@ export const ipcInputs = {
     .strict(),
   verify: z.object({ agent: providerIdSchema }).strict(),
   setProvider: z.object({ provider: providerIdSchema }).strict(),
+  setApiKey: z
+    .object({ provider: keyedProviderSchema, key: z.string().trim().min(8).max(400) })
+    .strict(),
+  clearApiKey: z.object({ provider: keyedProviderSchema }).strict(),
   addSampleFolder: emptySchema,
   removeSampleFolder: z.object({ path: z.string().min(1).max(1000) }).strict(),
   reindexSamples: emptySchema,

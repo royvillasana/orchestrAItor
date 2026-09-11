@@ -13,7 +13,7 @@ import {
   migration003,
   SCHEMA_VERSION,
 } from '../apps/desktop/electron/store';
-import { artifactSchema, activitySchema } from '../packages/shared-types/src';
+import { artifactSchema, activitySchema, credentialSchema } from '../packages/shared-types/src';
 import {
   trustedURL,
   trustedSender,
@@ -410,5 +410,55 @@ describe('SQLite persistence', () => {
     expect(Number(db.exec('SELECT MAX(version) FROM schema_migrations')[0].values[0][0])).toBe(1);
     expect(db.exec("SELECT name FROM sqlite_master WHERE name='ok'")).toEqual([]);
     db.close();
+  });
+
+  it('stores a credential as ciphertext, hands back only a hint, and forgets it on request', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'orchestrai-secret-'));
+    const file = path.join(directory, 'orchestrai.sqlite');
+    const store = await LocalStore.open(file, wasm);
+    // Stands in for safeStorage, which needs a real Electron main process: what
+    // matters here is that the store never sees the plaintext.
+    const encrypt = (value: string) => Buffer.from(`enc:${value}`).toString('base64');
+    await store.execute({ type: 'setSecret', key: 'openai', value: encrypt('sk-secret-key-1234') });
+    expect(await store.execute({ type: 'secrets' })).toEqual({
+      openai: encrypt('sk-secret-key-1234'),
+    });
+    // The plaintext must not be recoverable by reading the database file.
+    store.close();
+    const reopened = await LocalStore.open(file, wasm);
+    expect(readFileSync(file).includes('sk-secret-key-1234')).toBe(false);
+    // Replacing a key overwrites rather than accumulating.
+    await reopened.execute({
+      type: 'setSecret',
+      key: 'openai',
+      value: encrypt('sk-second-key-5678'),
+    });
+    const secrets = await reopened.execute({ type: 'secrets' });
+    expect(Object.keys(secrets as object)).toEqual(['openai']);
+    expect(
+      Buffer.from(String((secrets as Record<string, string>).openai), 'base64').toString(),
+    ).toBe('enc:sk-second-key-5678');
+    await reopened.execute({ type: 'setSecret', key: 'openai', value: null });
+    expect(await reopened.execute({ type: 'secrets' })).toEqual({});
+  });
+
+  it('describes a credential to the renderer without carrying the key', () => {
+    expect(credentialSchema.parse({ provider: 'openai', stored: true, hint: '1234' })).toEqual({
+      provider: 'openai',
+      stored: true,
+      hint: '1234',
+    });
+    // A hint long enough to be a usable key is not a hint.
+    expect(() =>
+      credentialSchema.parse({ provider: 'openai', stored: true, hint: 'sk-secret-key-1234' }),
+    ).toThrow();
+    // No field exists to smuggle one through.
+    expect(() =>
+      credentialSchema.parse({ provider: 'openai', stored: true, hint: '1234', key: 'sk-x' }),
+    ).toThrow();
+    // Only providers that take a key can have one.
+    expect(() =>
+      credentialSchema.parse({ provider: 'claude', stored: true, hint: null }),
+    ).toThrow();
   });
 });

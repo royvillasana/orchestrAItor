@@ -340,6 +340,12 @@ export class LocalStore {
         .slice(0, command.limit);
     if (command.type === 'sampleByPath') return this.sampleByPath(command.path);
     if (command.type === 'artifacts') return this.artifacts();
+    if (command.type === 'secrets')
+      return Object.fromEntries(
+        (
+          this.db.exec("SELECT key, value FROM settings WHERE key LIKE 'secret.%'")[0]?.values ?? []
+        ).map((row) => [String(row[0]).slice('secret.'.length), String(row[1])]),
+      );
     if (command.type === 'samplesForRoot')
       return (
         this.db.exec('SELECT json FROM samples WHERE root=?', [command.root])[0]?.values ?? []
@@ -381,6 +387,16 @@ export class LocalStore {
           rmSync(existing.path, { force: true });
           this.db.run('DELETE FROM artifacts WHERE id=?', [command.id]);
         }
+      }
+      if (command.type === 'setSecret') {
+        // Ciphertext only: the plaintext never reaches this process.
+        if (command.value === null)
+          this.db.run('DELETE FROM settings WHERE key=?', [`secret.${command.key}`]);
+        else
+          this.db.run(
+            'INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
+            [`secret.${command.key}`, command.value],
+          );
       }
       if (command.type === 'analysed') {
         const existing = this.sampleById(command.id);

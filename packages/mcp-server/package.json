@@ -13,6 +13,7 @@
     "zod": "3.25.76",
     "@orchestrai/live-agents": "workspace:*",
     "@orchestrai/cli": "workspace:*",
-    "@orchestrai/music-engine": "workspace:*"
+    "@orchestrai/music-engine": "workspace:*",
+    "@orchestrai/openai": "workspace:*"
   }
 }

@@ -9,6 +9,7 @@ import {
   type MidiPort,
 } from '@orchestrai/cubase';
 import { DemoProvider } from '@orchestrai/agent-core';
+import { OpenAIProvider, HttpOpenAITransport } from '@orchestrai/openai';
 import { AgentToolChannel, LiveAgentProvider } from '@orchestrai/live-agents';
 import { discoverAgents, verifyAgent, isVerifiable } from '@orchestrai/cli';
 import { Orchestrator } from '@orchestrai/orchestrator';
@@ -186,7 +187,14 @@ const providerNames: Record<ProviderId, string> = {
   demo: 'Demo agent',
   claude: 'Claude Code',
   codex: 'Codex',
+  openai: 'OpenAI',
 };
+/**
+ * Keys live in the desktop process and arrive here when a keyed session
+ * connects. Held in memory for the session, never written, never put in the
+ * environment of any child this process spawns.
+ */
+const apiKeys = new Map<string, string>();
 /**
  * One channel for however many turns a live agent runs, opened only while a
  * live provider is selected so no agent surface exists during a demo session.
@@ -216,7 +224,25 @@ async function useProvider(id: ProviderId) {
   if (id === activeId && (id === 'demo' || live)) return;
   await live?.dispose();
   live = null;
-  if (id === 'demo') {
+  if (id === 'openai') {
+    const key = apiKeys.get('openai');
+    if (!key) throw new Error('Add an OpenAI API key in the connection screen first.');
+    const provider = new OpenAIProvider(
+      new HttpOpenAITransport({
+        apiKey: key,
+        onDelta: (text) => emit({ conversationId: agentConversationId, text, done: false }),
+        // A keyed provider reaches the session the same way every other
+        // provider does: through the registry and the permission engine.
+        runTool: async (tool, args) => {
+          const activity = await orchestration.request(tool, args, agentConversationId, 'openai');
+          return `${activity.tool}: ${activity.status}. ${activity.detail}`;
+        },
+      }),
+    );
+    await provider.initialize();
+    active = provider;
+    activeId = 'openai';
+  } else if (id === 'demo') {
     await channel.stop();
     active = demo;
     activeId = 'demo';
@@ -285,6 +311,13 @@ async function control(command: Control): Promise<unknown> {
       return orchestration.state();
     case 'midi':
       return midiStatus();
+    case 'credential': {
+      if (command.key) apiKeys.set(command.provider, command.key);
+      else apiKeys.delete(command.provider);
+      // Switching away from a provider whose key just disappeared.
+      if (!command.key && activeId === command.provider) await useProvider('demo');
+      return orchestration.state();
+    }
     case 'verify': {
       if (!isVerifiable(command.agent)) throw new Error('The Demo agent needs no verification.');
       const executable = (await executablesById())[command.agent];

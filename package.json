@@ -22,7 +22,8 @@
     "test:smoke-bridge": "node scripts/smoke-bridge.mjs",
     "test:smoke-agent": "node scripts/smoke-agent.mjs",
     "test:smoke-samples": "node scripts/smoke-samples.mjs",
-    "test:smoke-agent-mode": "node scripts/smoke-agent-mode.mjs"
+    "test:smoke-agent-mode": "node scripts/smoke-agent-mode.mjs",
+    "test:smoke-credentials": "node scripts/smoke-credentials.mjs"
   },
   "devDependencies": {
     "@eslint/js": "9.39.1",

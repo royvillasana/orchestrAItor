@@ -116,6 +116,7 @@ export function Studio({ setup = false }: { setup?: boolean }) {
   const [sampleQuery, setSampleQuery] = useState('');
   const [preview, setPreview] = useState<string | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
+  const [apiKeyDraft, setApiKeyDraft] = useState('');
   const [runWrites, setRunWrites] = useState(6);
   const [runMinutes, setRunMinutes] = useState(2);
   // A continuously animating glow is not free, and this is an audio
@@ -233,6 +234,7 @@ export function Studio({ setup = false }: { setup?: boolean }) {
   // The bridge is offered only when it could actually connect; the reason a
   // producer cannot use it is more useful than a button that always fails.
   const agentById = (id: string) => data?.agents.find((agent) => agent.id === id);
+  const openaiCredential = data?.credentials?.find((entry) => entry.provider === 'openai');
   const partnerOptions = [
     {
       id: 'demo' as const,
@@ -241,6 +243,19 @@ export function Studio({ setup = false }: { setup?: boolean }) {
       detail: 'Fixed local responses for exercising the workspace. Never a model answer.',
       agent: undefined,
       unavailable: null as string | null,
+    },
+    {
+      id: 'openai' as const,
+      title: 'OpenAI',
+      subtitle: openaiCredential?.stored
+        ? `API key stored · ends ${openaiCredential.hint}`
+        : 'Live model session · Needs an API key',
+      detail:
+        'Sends this conversation and project state to OpenAI. The key is encrypted by your system credential store and never leaves this machine in the clear.',
+      agent: undefined,
+      unavailable: openaiCredential?.stored
+        ? null
+        : ('Add an API key below to use OpenAI.' as string | null),
     },
     ...(
       [
@@ -547,9 +562,59 @@ export function Studio({ setup = false }: { setup?: boolean }) {
                           )}
                       </div>
                       {(blocked || selected) && (
-                        <p className="mt-2 border-t border-line/60 pt-2 text-[11px] leading-4 text-muted tall:mt-3 tall:pt-3 tall:leading-5">
-                          {option.unavailable ?? option.detail}
-                        </p>
+                        <div className="mt-2 space-y-1 border-t border-line/60 pt-2 text-[11px] leading-4 text-muted tall:mt-3 tall:pt-3 tall:leading-5">
+                          {option.unavailable && <p>{option.unavailable}</p>}
+                          {/* A key is handed over before the partner can be
+                              selected, so what happens to it is said first. */}
+                          {(!option.unavailable || option.id === 'openai') && (
+                            <p className={option.unavailable ? 'text-muted/70' : undefined}>
+                              {option.detail}
+                            </p>
+                          )}
+                        </div>
+                      )}
+                      {option.id === 'openai' && (
+                        <form
+                          className="mt-2 flex items-center gap-2"
+                          onSubmit={(event) => {
+                            event.preventDefault();
+                            if (!apiKeyDraft.trim()) return;
+                            void run((api) =>
+                              api.setApiKey({ provider: 'openai', key: apiKeyDraft.trim() }),
+                            );
+                            // Cleared immediately: it is never shown again.
+                            setApiKeyDraft('');
+                          }}
+                        >
+                          <label htmlFor="openai-key" className="sr-only">
+                            OpenAI API key
+                          </label>
+                          <input
+                            id="openai-key"
+                            type="password"
+                            value={apiKeyDraft}
+                            onChange={(event) => setApiKeyDraft(event.target.value)}
+                            placeholder={
+                              openaiCredential?.stored ? 'Replace the stored key' : 'sk-…'
+                            }
+                            className="min-w-0 flex-1 rounded-lg border border-line bg-panel px-2.5 py-1.5 text-[11px]"
+                          />
+                          <button disabled={busy || !apiKeyDraft.trim()} className={smallButton}>
+                            Save key
+                          </button>
+                          {openaiCredential?.stored && (
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() =>
+                                void run((api) => api.clearApiKey({ provider: 'openai' }))
+                              }
+                              className={smallButton}
+                            >
+                              Remove
+                            </button>
+                          )}
+                        </form>
                       )}
                     </div>
                   );

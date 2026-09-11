@@ -3,7 +3,9 @@
 ## Purpose
 
 TBD - created by archiving change setup-orchestrai-desktop. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: DAW-independent adapter contract
 
 The shared contract SHALL define connect, disconnect, getCapabilities, getProjectState, and execute using normalized project, track, capability, command, and result schemas without Cubase-specific command names.
@@ -68,4 +70,3 @@ The mock SHALL carry a plugin on at least one fixture track with named quick con
 
 - **WHEN** a plugin write names a mock track with no plugin
 - **THEN** it is refused and nothing changes
-

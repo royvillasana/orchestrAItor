@@ -5,6 +5,7 @@ import {
   ipcMain,
   nativeImage,
   protocol,
+  safeStorage,
   session,
   shell,
 } from 'electron';
@@ -75,6 +76,38 @@ let streaming: StreamChunk | null = null;
 let samples: Snapshot['samples'] = [];
 let library: Snapshot['library'] = { roots: [], total: 0 };
 let artifacts: Snapshot['artifacts'] = [];
+let credentials: Snapshot['credentials'] = [];
+/**
+ * Keys are encrypted by the operating system's credential store and only the
+ * ciphertext is persisted. The plaintext exists in this process while a keyed
+ * session is connected and is never written, never sent to the renderer, and
+ * never added to the environment any child process receives.
+ */
+async function readSecrets(): Promise<Record<string, string>> {
+  return z.record(z.string()).parse(await db.execute({ type: 'secrets' }));
+}
+function decryptSecret(ciphertext: string): string | null {
+  try {
+    return safeStorage.decryptString(Buffer.from(ciphertext, 'base64'));
+  } catch (error) {
+    log('credential.unreadable', errorText(error));
+    return null;
+  }
+}
+async function refreshCredentials() {
+  const stored = await readSecrets();
+  credentials = (['openai'] as const).map((provider) => {
+    const ciphertext = stored[provider];
+    const key = ciphertext ? decryptSecret(ciphertext) : null;
+    return {
+      provider,
+      stored: !!key,
+      // Enough to tell one key from another, not enough to use one.
+      hint: key ? key.slice(-4) : null,
+    };
+  });
+  return stored;
+}
 /** Discovery ids are product names; provider ids are what the runtime selects. */
 /** Drag needs a picture; a plain accent tile beats a missing icon. */
 const DRAG_ICON =
@@ -157,6 +190,7 @@ async function snapshot(): Promise<Snapshot> {
     analysing,
     streaming,
     artifacts,
+    credentials,
     samples,
     agents,
     history: lastHistory,
@@ -360,6 +394,28 @@ async function invoke(method: IpcMethod, input: unknown): Promise<Snapshot> {
       await db.execute({ type: 'removeArtifact', ...ipcInputs.removeArtifact.parse(value) });
       artifacts = z.array(artifactSchema).parse(await db.execute({ type: 'artifacts' }));
     }
+    if (method === 'setApiKey') {
+      const input = ipcInputs.setApiKey.parse(value);
+      if (!safeStorage.isEncryptionAvailable())
+        // Refused rather than written in the clear, which would be invisible at
+        // exactly the moment it mattered.
+        throw new Error(
+          'This system reports no credential store, so a key cannot be stored safely. Use a signed-in CLI instead.',
+        );
+      await db.execute({
+        type: 'setSecret',
+        key: input.provider,
+        value: safeStorage.encryptString(input.key).toString('base64'),
+      });
+      await refreshCredentials();
+      await runtime!.control({ type: 'credential', provider: input.provider, key: input.key });
+    }
+    if (method === 'clearApiKey') {
+      const input = ipcInputs.clearApiKey.parse(value);
+      await db.execute({ type: 'setSecret', key: input.provider, value: null });
+      await refreshCredentials();
+      await runtime!.control({ type: 'credential', provider: input.provider, key: null });
+    }
     if (method === 'startRun')
       await runtime!.control({ type: 'startRun', ...ipcInputs.startRun.parse(value) });
     if (method === 'stopRun') await runtime!.control({ type: 'stopRun' });
@@ -518,6 +574,16 @@ const ready = app
     agents = await discoverAgents();
     library = sampleLibrarySchema.parse(await db.execute({ type: 'library' }));
     await startRuntime();
+    // A stored key reaches the runtime only when the application starts it,
+    // over the trusted control channel.
+    const stored = await refreshCredentials();
+    for (const [provider, ciphertext] of Object.entries(stored)) {
+      const key = decryptSecret(ciphertext);
+      if (key)
+        await runtime!
+          .control({ type: 'credential', provider: provider as 'openai', key })
+          .catch((error) => log('credential.load_failed', errorText(error)));
+    }
     try {
       midi = midiStatusSchema.parse(await runtime!.control({ type: 'midi' }));
     } catch (error) {

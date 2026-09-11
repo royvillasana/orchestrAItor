@@ -69,4 +69,39 @@ describe('real MCP/runtime process', () => {
     expect((await runtime.state()).connected).toBe(false);
     expect(failures).toEqual([]);
   });
+  it('accepts a stored key over the control channel and falls back when it is removed', async () => {
+    const data = await mkdtemp(path.join(tmpdir(), 'orchestrai-credential-'));
+    const failures: string[] = [];
+    const db = new DatabaseService(directory, data, (error) => failures.push(error));
+    await db.ready;
+    const runtime = new RuntimeService(
+      directory,
+      db,
+      (error) => failures.push(error),
+      () => {},
+      () => {},
+      () => {},
+    );
+    cleanup.push(async () => {
+      await runtime.close();
+      await db.close();
+    });
+    await runtime.start();
+    // Without a key there is nothing to select: the runtime says so rather than
+    // starting a session that would fail on its first request.
+    await expect(runtime.control({ type: 'provider', provider: 'openai' })).rejects.toThrow(
+      /API key/i,
+    );
+    await runtime.control({ type: 'credential', provider: 'openai', key: 'sk-test-key-1234' });
+    await runtime.control({ type: 'provider', provider: 'openai' });
+    expect((await runtime.state()).provider).toBe('openai');
+    expect((await runtime.state()).providerLive).toBe(true);
+    // Removing the key must not leave a session holding it.
+    await runtime.control({ type: 'credential', provider: 'openai', key: null });
+    expect((await runtime.state()).provider).toBe('demo');
+    await expect(runtime.control({ type: 'provider', provider: 'openai' })).rejects.toThrow(
+      /API key/i,
+    );
+    expect(failures).toEqual([]);
+  });
 });
