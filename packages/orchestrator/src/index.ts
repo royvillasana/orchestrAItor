@@ -10,6 +10,7 @@ import {
   type Capability,
   localToolNames,
   isLocalTool,
+  isUnpromptedTool,
   isLocalWriteTool,
   activitySchema,
   errorText,
@@ -129,7 +130,9 @@ export class Orchestrator {
     return (await this.capabilities()).filter(
       // Ask is reads only. Assist and Agent both expose writes; what differs is
       // whether a write waits for approval, not whether the tool exists.
-      (c) => c.support !== 'unsupported' && (this.mode !== 'ask' || c.risk === 'read'),
+      (c) =>
+        c.support !== 'unsupported' &&
+        (this.mode !== 'ask' || c.risk === 'read' || isUnpromptedTool(c.id)),
     );
   }
   /** Local, read-only sample search, injected so the orchestrator owns no storage. */
@@ -276,7 +279,10 @@ export class Orchestrator {
       if (!isLocalTool(tool) && !this.connected)
         throw new Error('Tool unavailable in the current adapter session.');
       call = { ...call, arguments: validated };
-      if (capability.risk !== 'read') {
+      // Playing and stopping move the playhead, not the project. They are
+      // recorded like any other call and execute directly, in every mode:
+      // approving "play" would be approving listening.
+      if (capability.risk !== 'read' && !isUnpromptedTool(tool)) {
         if (this.mode === 'ask')
           return this.record({
             ...call,

@@ -1372,7 +1372,9 @@ export function Studio({ setup = false }: { setup?: boolean }) {
                     {runtime?.providerLabel ?? 'Demo agent'} ·{' '}
                     {runtime?.providerLive ? 'Live model' : 'Local only'}
                     <span className="mx-1 text-line">|</span>
-                    {mode === 'ask' ? 'Read-only session' : 'Changes need approval'}
+                    {/* Transport is the exception in both, so neither label
+                        promises more than the permission engine does. */}
+                    {mode === 'ask' ? 'Reads and transport' : 'Changes need approval'}
                     <span className="mx-1 hidden text-line xl:inline">|</span>
                     <span className="hidden text-muted/60 xl:inline">
                       <kbd className="font-mono">↵</kbd> send · <kbd className="font-mono">⇧↵</kbd>{' '}

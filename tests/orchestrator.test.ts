@@ -28,13 +28,37 @@ describe('permission-controlled orchestration', () => {
   it('filters tools and rejects Ask writes even when invoked directly', async () => {
     const { core } = fixture();
     await core.connect();
+    // Ask mode reads, and moves the playhead: playing changes nothing that is
+    // saved, so it is not one of the writes Ask withholds.
     expect((await core.tools()).map((t) => t.id)).toEqual([
       'project.get_state',
       'project.get_tempo',
+      'transport.play',
+      'transport.stop',
     ]);
     const result = await core.request('project.set_tempo', { tempo: 124 }, 'c');
     expect(result.status).toBe('denied');
     expect((await core.state()).project?.tempo).toBe(122);
+  });
+  it('plays and stops without asking, in every mode', async () => {
+    for (const mode of ['ask', 'assist'] as const) {
+      const { core } = fixture();
+      await core.connect();
+      await core.setMode(mode);
+      const played = await core.request('transport.play', {}, 'c');
+      // Recorded like any other call, but never left waiting on a producer.
+      expect(played.status).toBe('succeeded');
+      expect((await core.state()).project?.playing).toBe(true);
+      // Still an ordinary recorded call: it offers the same undo it always did.
+      expect(played.undoable).toBe(true);
+      const stopped = await core.request('transport.stop', {}, 'c');
+      expect(stopped.status).toBe('succeeded');
+      expect((await core.state()).project?.playing).toBe(false);
+      // Everything else in that mode is unchanged.
+      const tempo = await core.request('project.set_tempo', { tempo: 124 }, 'c');
+      expect(tempo.status).toBe(mode === 'ask' ? 'denied' : 'awaiting-approval');
+      expect((await core.state()).project?.tempo).toBe(122);
+    }
   });
   it('persists intent, waits for approval, executes once, and rejects replay', async () => {
     const { core, calls } = fixture();
@@ -69,17 +93,17 @@ describe('permission-controlled orchestration', () => {
     const { core, advance } = fixture();
     await core.connect();
     await core.setMode('assist');
-    const a = await core.request('transport.play', {}, 'c');
+    const a = await core.request('track.set_mute', { trackId: 'kick', mute: true }, 'c');
     expect((await core.decide(a.id, core.sessionId, false)).status).toBe('cancelled');
-    const b = await core.request('transport.play', {}, 'c');
+    const b = await core.request('track.set_mute', { trackId: 'kick', mute: true }, 'c');
     advance();
     expect((await core.decide(b.id, core.sessionId, true)).status).toBe('denied');
-    const c = await core.request('transport.play', {}, 'c');
+    const c = await core.request('track.set_mute', { trackId: 'kick', mute: true }, 'c');
     expect((await core.decide(c.id, 'different-session', true)).status).toBe('denied');
     await core.setMode('ask');
     await core.setMode('assist');
     expect((await core.decide(c.id, core.sessionId, true)).status).toBe('denied');
-    const d = await core.request('transport.play', {}, 'c');
+    const d = await core.request('track.set_mute', { trackId: 'kick', mute: true }, 'c');
     await core.disconnect();
     expect((await core.decide(d.id, core.sessionId, true)).status).toBe('denied');
   });
@@ -107,13 +131,15 @@ describe('permission-controlled orchestration', () => {
     const a = await core.request('project.set_tempo', { tempo: 124 }, 'c');
     await core.decide(a.id, core.sessionId, true);
     const undo = await core.undo(a.id, 'c');
+    // Playing needs no approval, but it does move the session, which is what
+    // makes the undo of the earlier tempo change stale.
     const b = await core.request('transport.play', {}, 'c');
-    await core.decide(b.id, core.sessionId, true);
+    expect(b.status).toBe('succeeded');
     expect((await core.decide(undo.id, core.sessionId, true)).detail).toContain('Undo conflict');
     const undoB = await core.undo(b.id, 'c');
     await core.decide(undoB.id, core.sessionId, true);
     expect((await core.state()).project?.playing).toBe(false);
-    const c = await core.request('transport.play', {}, 'c');
+    const c = await core.request('track.set_mute', { trackId: 'kick', mute: true }, 'c');
     const results = await Promise.all([
       core.decide(c.id, core.sessionId, true),
       core.decide(c.id, core.sessionId, true),
@@ -286,7 +312,7 @@ describe('permission-controlled orchestration', () => {
     const { core, adapter } = fixture();
     await core.connect();
     await core.setMode('assist');
-    const a = await core.request('transport.play', {}, 'c');
+    const a = await core.request('track.set_mute', { trackId: 'kick', mute: true }, 'c');
     await adapter.disconnect();
     expect((await core.decide(a.id, core.sessionId, true)).status).toBe('failed');
   });

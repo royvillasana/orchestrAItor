@@ -144,6 +144,15 @@ export type AgentRun = z.infer<typeof runSchema>;
  * What Agent mode may do without asking. Deliberately a short list of
  * reversible session changes; anything else still takes an approval.
  */
+/**
+ * Moving the playhead is not a change to the project: nothing is written,
+ * nothing is saved, and pressing stop is its own undo. Asking a producer to
+ * approve play is asking them to approve listening, so these run directly in
+ * every mode.
+ */
+export const UNPROMPTED_TOOLS = ['transport.play', 'transport.stop'] as const;
+export const isUnpromptedTool = (name: string): name is (typeof UNPROMPTED_TOOLS)[number] =>
+  (UNPROMPTED_TOOLS as readonly string[]).includes(name);
 export const AGENT_MODE_TOOLS = [
   'project.set_tempo',
   'transport.play',

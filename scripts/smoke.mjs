@@ -121,11 +121,18 @@ try {
   await page.waitForFunction(
     () => document.querySelector('[data-testid="tempo"]')?.textContent === '124',
   );
+  // Play runs straight away: it moves the playhead, not the project, so there
+  // is nothing to approve and no approval prompt should appear.
   await page.getByRole('button', { name: 'Play transport', exact: true }).click();
-  await page.getByRole('button', { name: 'Approve', exact: true }).click();
   await page.waitForFunction(() => document.body.innerText.includes('PLAYING'));
+  assert.equal(
+    await page.getByRole('button', { name: 'Approve', exact: true }).count(),
+    0,
+    'Playing must not ask for approval.',
+  );
+  // Undoing a transport change is itself a transport change, so it runs the
+  // same way: the session stops without a second prompt.
   await page.getByRole('button', { name: 'Undo change ↶', exact: true }).first().click();
-  await page.getByRole('button', { name: 'Approve', exact: true }).click();
   await page.waitForFunction(() => document.body.innerText.includes('STOPPED'));
   await page.reload();
   await page.getByRole('heading', { name: 'Studio conversation' }).waitFor();

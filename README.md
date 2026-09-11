@@ -30,7 +30,7 @@ The exported Next.js pages and Tailwind assets load through `orchestra://app`. T
 2. Send **Inspect the project** in Ask mode. The read appears in Tool Activity.
 3. Switch to **Assist**, then send **Set tempo to 124 BPM**.
 4. Cancel the first proposal. Tempo stays at 122. Send it again and approve: the mock project changes to 124 BPM.
-5. Try the transport buttons. Each write requests approval. **Undo change** proposes restoring prior mock state and rejects conflicts with newer changes.
+5. Try the transport buttons. Play and stop run immediately — they move the playhead, not the project — while every other write requests approval. **Undo change** proposes restoring prior mock state and rejects conflicts with newer changes.
 6. Open the developer console to inspect correlated local events. Create or reopen conversations from the sidebar.
 
 The mock transport produces no audio. Requests for sample search, MIDI generation, or plugin control explain their unavailability. The Demo agent is intentionally deterministic and is never presented as a live Claude/OpenAI response.
@@ -230,7 +230,7 @@ Clips live under `artifacts/` in the application data directory, never in your p
 
 ## Agent mode
 
-Ask reads. Assist approves every write. **Agent mode** runs a bounded sequence of changes without a prompt for each one — for iterating, where approving every step is the whole interaction.
+Ask reads. Assist approves every write. Play and stop are the exception in both: they move the playhead, nothing is written or saved, and pressing stop is its own undo, so approving them would be approving listening. **Agent mode** runs a bounded sequence of changes without a prompt for each one — for iterating, where approving every step is the whole interaction.
 
 It is the only path where the session changes without a prompt immediately before the change, so the guarantee moves elsewhere:
 
